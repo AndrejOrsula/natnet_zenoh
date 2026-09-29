@@ -1,0 +1,92 @@
+[package]
+name = "natnet_zenoh"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "Apache-2.0 OR MIT"
+description = "Pure-Rust bridge from OptiTrack NatNet to Zenoh, with native ROS 2 (rmw_zenoh) interoperability: TF, poses, odometry, markers, skeletons, force plates, diagnostics and services."
+repository = "https://github.com/SpaceRL/natnet_zenoh"
+readme = "README.md"
+keywords = ["natnet", "optitrack", "zenoh", "ros2", "mocap"]
+categories = ["network-programming", "science::robotics"]
+default-run = "natnet_zenoh"
+# The `natnet` git dependency cannot be published to crates.io.
+publish = false
+
+[features]
+default = []
+# Additional zenoh link transports. The default build carries TCP and
+# Unix-socket links only, all pure Rust. UDP, TLS, QUIC and WebSocket links
+# pull a cryptography stack that is not pure Rust (`ring`, which needs a C
+# compiler), so they are opt-in. zenoh's UDP link always builds its QUIC
+# datagram sibling, hence `ring`.
+transport_udp = ["zenoh/transport_udp"]
+transport_tls = ["zenoh/transport_tls"]
+transport_quic = ["zenoh/transport_quic"]
+transport_ws = ["zenoh/transport_ws"]
+# zenoh user/password and public-key authentication, and link compression,
+# all pure Rust; configure them through a zenoh configuration file.
+auth_usrpwd = ["zenoh/auth_usrpwd"]
+auth_pubkey = ["zenoh/auth_pubkey"]
+transport_compression = ["zenoh/transport_compression"]
+# zenoh shared-memory transport for same-host subscribers.
+shared-memory = ["zenoh/shared-memory"]
+
+[[bin]]
+name = "natnet_zenoh"
+path = "src/main.rs"
+
+[dependencies]
+# The sans-io NatNet protocol core and its std-UDP clients, pinned to a
+# published commit. Build against a local checkout instead with
+# `cargo --config 'patch."https://github.com/AndrejOrsula/natnet.git".natnet.path="../natnet"' ...`.
+natnet = { git = "https://github.com/AndrejOrsula/natnet.git", rev = "6637d7493a7a3b279d205f52ad50f72c181e6e94", features = ["net", "serde"] }
+zenoh = { version = "1.10", default-features = false, features = [
+    "transport_tcp",
+    "transport_unixsock-stream",
+] }
+# AdvancedPublisher/AdvancedSubscriber, which rmw_zenoh_cpp uses for
+# transient-local topics since 0.2.2. They sit behind zenoh's `unstable`
+# API; the default features would pull every zenoh transport back in.
+zenoh-ext = { version = "1.10", default-features = false, features = ["unstable"] }
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+ctrlc = { version = "3.4", features = ["termination"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# Multicast data sockets need SO_REUSEADDR (to coexist with other NatNet
+# clients on the host) and a larger receive buffer; std exposes neither.
+socket2 = "0.6"
+thiserror = "2"
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+doc_markdown = "allow"
+float_cmp = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "allow"
+
+# Production panic and placeholder policy (tests are exempt via clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+string_slice = "warn"

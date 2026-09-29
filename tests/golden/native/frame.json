@@ -1,0 +1,579 @@
+{
+  "bodies": [
+    {
+      "frame_id": "body_1",
+      "id": 1,
+      "markers": [
+        [
+          0.22782,
+          -0.976984,
+          0.22
+        ],
+        [
+          0.27971,
+          -0.876449,
+          0.2
+        ],
+        [
+          0.380246,
+          -0.928339,
+          0.22
+        ],
+        [
+          0.328356,
+          -1.02887,
+          0.2
+        ]
+      ],
+      "mean_error": 0.0002,
+      "motive_name": "body_1",
+      "name": "body_1",
+      "pose": {
+        "orientation": [
+          0.0,
+          0.0,
+          -0.988094,
+          0.153848
+        ],
+        "position": [
+          0.304033,
+          -0.952661,
+          0.2
+        ]
+      },
+      "tracked": true,
+      "velocity": {
+        "angular_body": [
+          0.0,
+          0.0,
+          -0.628319
+        ],
+        "angular_world": [
+          0.0,
+          0.0,
+          -0.628319
+        ],
+        "linear_body": [
+          0.628316,
+          0.00163925,
+          0.0
+        ],
+        "linear_world": [
+          -0.598074,
+          -0.192591,
+          0.0
+        ]
+      }
+    },
+    {
+      "frame_id": "body_2",
+      "id": 2,
+      "markers": [
+        [
+          -0.960003,
+          0.291194,
+          0.32
+        ],
+        [
+          -0.898882,
+          0.195988,
+          0.3
+        ],
+        [
+          -0.994088,
+          0.134867,
+          0.32
+        ],
+        [
+          -1.05521,
+          0.230073,
+          0.3
+        ]
+      ],
+      "mean_error": 0.0002,
+      "motive_name": "body_2",
+      "name": "body_2",
+      "pose": {
+        "orientation": [
+          -0.0,
+          0.0,
+          -0.627284,
+          -0.778791
+        ],
+        "position": [
+          -0.977046,
+          0.21303,
+          0.3
+        ]
+      },
+      "tracked": true,
+      "velocity": {
+        "angular_body": [
+          0.0,
+          0.0,
+          -0.62831
+        ],
+        "angular_world": [
+          0.0,
+          0.0,
+          -0.62831
+        ],
+        "linear_body": [
+          0.628319,
+          0.0016445,
+          -0.0
+        ],
+        "linear_world": [
+          0.132244,
+          0.614246,
+          0.0
+        ]
+      }
+    },
+    {
+      "frame_id": "body_3",
+      "id": 3,
+      "markers": [
+        [
+          0.732183,
+          0.68579,
+          0.42
+        ],
+        [
+          0.619171,
+          0.680461,
+          0.4
+        ],
+        [
+          0.613842,
+          0.793472,
+          0.42
+        ],
+        [
+          0.726853,
+          0.798802,
+          0.4
+        ]
+      ],
+      "mean_error": 0.0002,
+      "motive_name": "body_3",
+      "name": "body_3",
+      "pose": {
+        "orientation": [
+          0.0,
+          0.0,
+          0.360811,
+          -0.932639
+        ],
+        "position": [
+          0.673012,
+          0.739631,
+          0.4
+        ]
+      },
+      "tracked": true,
+      "velocity": {
+        "angular_body": [
+          0.0,
+          0.0,
+          -0.628318
+        ],
+        "angular_world": [
+          0.0,
+          0.0,
+          -0.628318
+        ],
+        "linear_body": [
+          0.628312,
+          0.00164533,
+          0.0
+        ],
+        "linear_world": [
+          0.465826,
+          -0.421645,
+          0.0
+        ]
+      }
+    }
+  ],
+  "devices": [
+    {
+      "channel_names": [
+        "ai0",
+        "ai1"
+      ],
+      "channels": [
+        [
+          0.052336
+        ],
+        [
+          0.998629
+        ]
+      ],
+      "id": 2,
+      "name": "synthetic_daq"
+    }
+  ],
+  "force_plates": [
+    {
+      "channel_names": [
+        "Fx",
+        "Fy",
+        "Fz",
+        "Mx",
+        "My",
+        "Mz"
+      ],
+      "channels": [
+        [
+          5.0,
+          5.0,
+          5.0,
+          5.0,
+          5.0,
+          5.0,
+          5.0,
+          5.0
+        ],
+        [
+          -3.0,
+          -3.0,
+          -3.0,
+          -3.0,
+          -3.0,
+          -3.0,
+          -3.0,
+          -3.0
+        ],
+        [
+          702.617,
+          702.617,
+          702.617,
+          702.617,
+          702.617,
+          702.617,
+          702.617,
+          702.617
+        ],
+        [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ],
+        [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ]
+      ],
+      "id": 1,
+      "name": "force_plate_1"
+    }
+  ],
+  "frame_number": 241,
+  "markers": [
+    {
+      "id": 65537,
+      "member_id": 1,
+      "model_id": 1,
+      "params": 0,
+      "position": [
+        0.22782,
+        -0.976984,
+        0.22
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 65538,
+      "member_id": 2,
+      "model_id": 1,
+      "params": 0,
+      "position": [
+        0.27971,
+        -0.876449,
+        0.2
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 65539,
+      "member_id": 3,
+      "model_id": 1,
+      "params": 0,
+      "position": [
+        0.380246,
+        -0.928339,
+        0.22
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 65540,
+      "member_id": 4,
+      "model_id": 1,
+      "params": 0,
+      "position": [
+        0.328356,
+        -1.02887,
+        0.2
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 131073,
+      "member_id": 1,
+      "model_id": 2,
+      "params": 0,
+      "position": [
+        -0.960003,
+        0.291194,
+        0.32
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 131074,
+      "member_id": 2,
+      "model_id": 2,
+      "params": 0,
+      "position": [
+        -0.898882,
+        0.195988,
+        0.3
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 131075,
+      "member_id": 3,
+      "model_id": 2,
+      "params": 0,
+      "position": [
+        -0.994088,
+        0.134867,
+        0.32
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 131076,
+      "member_id": 4,
+      "model_id": 2,
+      "params": 0,
+      "position": [
+        -1.05521,
+        0.230073,
+        0.3
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 196609,
+      "member_id": 1,
+      "model_id": 3,
+      "params": 0,
+      "position": [
+        0.732183,
+        0.68579,
+        0.42
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 196610,
+      "member_id": 2,
+      "model_id": 3,
+      "params": 0,
+      "position": [
+        0.619172,
+        0.680461,
+        0.4
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 196611,
+      "member_id": 3,
+      "model_id": 3,
+      "params": 0,
+      "position": [
+        0.613842,
+        0.793472,
+        0.42
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 196612,
+      "member_id": 4,
+      "model_id": 3,
+      "params": 0,
+      "position": [
+        0.726853,
+        0.798802,
+        0.4
+      ],
+      "residual": 0.0001,
+      "size": 0.014
+    },
+    {
+      "id": 1000,
+      "member_id": 1000,
+      "model_id": 0,
+      "params": 16,
+      "position": [
+        0.0,
+        0.0,
+        0.01
+      ],
+      "residual": 0.0,
+      "size": 0.01
+    }
+  ],
+  "recording": false,
+  "server_latency": 0.004,
+  "skeletons": [
+    {
+      "bones": [
+        {
+          "frame_id": "actor_Hip",
+          "global": {
+            "orientation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.9
+            ]
+          },
+          "id": 1,
+          "local": {
+            "orientation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.9
+            ]
+          },
+          "name": "Hip",
+          "parent": null,
+          "parent_frame": null,
+          "tracked": true
+        },
+        {
+          "frame_id": "actor_Spine",
+          "global": {
+            "orientation": [
+              0.0,
+              0.0873505,
+              0.0,
+              0.996178
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.25
+            ]
+          },
+          "id": 2,
+          "local": {
+            "orientation": [
+              0.0,
+              0.0873505,
+              0.0,
+              0.996178
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.25
+            ]
+          },
+          "name": "Spine",
+          "parent": 1,
+          "parent_frame": null,
+          "tracked": true
+        },
+        {
+          "frame_id": "actor_Head",
+          "global": {
+            "orientation": [
+              0.0,
+              -0.0873505,
+              0.0,
+              0.996178
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.4
+            ]
+          },
+          "id": 3,
+          "local": {
+            "orientation": [
+              0.0,
+              -0.0873505,
+              0.0,
+              0.996178
+            ],
+            "position": [
+              0.0,
+              0.0,
+              0.4
+            ]
+          },
+          "name": "Head",
+          "parent": 2,
+          "parent_frame": null,
+          "tracked": true
+        }
+      ],
+      "id": 1,
+      "name": "actor"
+    }
+  ],
+  "stamp_secs": 1800000000.0,
+  "total_latency": 0.00400019
+}

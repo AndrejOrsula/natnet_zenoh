@@ -1,0 +1,18 @@
+{
+  "clock_offset": 1800000000.0,
+  "decode_errors": 0,
+  "dropped_frames": 0,
+  "duplicate_frames": 0,
+  "frame_rate": 120.0,
+  "frames": 2,
+  "labeled_markers": 13,
+  "last_frame_number": 241,
+  "late_frames": 0,
+  "queue_drops": 0,
+  "resets": 0,
+  "rigid_bodies": 3,
+  "server_latency": 0.004,
+  "state": "streaming",
+  "total_latency": 0.00400019,
+  "tracked_rigid_bodies": 3
+}

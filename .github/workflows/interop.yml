@@ -1,0 +1,55 @@
+name: ROS 2 interop
+
+# Stock ROS 2 nodes (rmw_zenoh_cpp from the ROS apt repository) against the
+# bridge's synthetic scene: `tests/interop/ros2.sh`, once per distribution.
+# It runs on a GitHub-hosted runner, because the self-hosted fleet's runner
+# user cannot reach the Docker socket. Manual only: hosted minutes on a
+# private repository are billed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ros2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [jazzy, humble]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master, 2026-09-03
+        with:
+          toolchain: stable
+
+      # As in the Rust workflow: the token reaches the private `natnet`
+      # dependency in this step's environment only.
+      - name: cargo fetch
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/AndrejOrsula/natnet.git.insteadOf"
+            export GIT_CONFIG_VALUE_0=https://github.com/AndrejOrsula/natnet.git
+          else
+            echo "GH_PAT is not set; relying on the runner's own git credentials"
+          fi
+          cargo fetch --locked
+          echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+
+      - name: cargo build --release
+        run: cargo build --locked --release
+
+      - name: ROS 2 ${{ matrix.distro }} interop
+        run: tests/interop/ros2.sh "${{ matrix.distro }}" target/release/natnet_zenoh

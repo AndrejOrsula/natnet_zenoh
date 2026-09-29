@@ -1,0 +1,9 @@
+{
+  "application": "natnet_zenoh synthetic",
+  "clock_frequency": 10000000,
+  "data_port": 1511,
+  "multicast": true,
+  "multicast_group": "239.255.42.99",
+  "protocol_version": "4.1.0.0",
+  "server_version": "3.1.0.0"
+}

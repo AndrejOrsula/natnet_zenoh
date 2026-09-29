@@ -1,0 +1,119 @@
+name: Rust
+
+# Gates: fmt, clippy (-D warnings), tests and rustdoc for the default and
+# all-feature builds on stable, plus the MSRV. Mirrors the natnet workflow:
+# the same self-hosted fleet and the same pinned actions.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  # A superseded pull-request run is cancelled; runs on main all finish, so
+  # each one saves its cache.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    # Pull requests from forks would run untrusted build scripts and tests on
+    # the self-hosted runner, next to its git credentials; only same-repository
+    # branches are built.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # `runs-on: ubuntu-latest` alone resolves to a GitHub-hosted runner even
+    # when a self-hosted one carries that label.
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The MSRV is `rust-version` in Cargo.toml, stated nowhere else.
+      - name: read the MSRV
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$msrv" || { echo "no rust-version in Cargo.toml"; exit 1; }
+          echo "MSRV=$msrv" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master, 2026-09-03
+        with:
+          toolchain: ${{ env.MSRV }}
+
+      # `rust-toolchain.toml` selects `stable` for every in-repo cargo call,
+      # so stable carries the lint components.
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master, 2026-09-03
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
+
+      # `natnet` is a private git dependency (fetched with the git CLI, see
+      # `.cargo/config.toml`). The token in the GH_PAT secret grants access;
+      # the URL rewrite exists in this step's
+      # environment only, never in later steps or the runner's global git
+      # configuration. Every later build, test and build script runs offline.
+      - name: cargo fetch
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/AndrejOrsula/natnet.git.insteadOf"
+            export GIT_CONFIG_VALUE_0=https://github.com/AndrejOrsula/natnet.git
+          else
+            echo "GH_PAT is not set; relying on the runner's own git credentials"
+          fi
+          cargo fetch --locked
+          echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+
+      - name: record toolchains
+        run: |
+          rustc --version --verbose
+          cargo --version --verbose
+          rustc +${{ env.MSRV }} --version
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (default features)
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo clippy (all features)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      # The tests need only loopback networking (TCP, UDP and multicast on
+      # 127.0.0.1) and no ROS installation.
+      - name: cargo test (default features)
+        run: cargo test --locked
+
+      # Every optional zenoh transport and authentication feature: the
+      # feature-gated code paths and their dependency stack.
+      - name: cargo test (all features)
+        run: cargo test --locked --all-features
+
+      - name: cargo doc (default features)
+        run: cargo doc --locked --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: cargo doc (all features)
+        run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # The explicit toolchain selector overrides `rust-toolchain.toml`.
+      - name: cargo build (MSRV)
+        run: cargo +${{ env.MSRV }} build --locked --all-targets
