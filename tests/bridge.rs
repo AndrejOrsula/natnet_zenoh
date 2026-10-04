@@ -170,7 +170,8 @@ fn synthetic_to_ros_and_native() {
     assert_eq!(values[0].string_value, "mocap");
     assert_eq!(values[1].r#type, ParameterValue::INTEGER);
     // Like rclcpp, an undeclared name empties the whole answer.
-    assert!(ask(&["ros.world_frame", "nope"]).is_empty());
+    let answer = ask(&["ros.world_frame", "nope"]);
+    assert!(answer.is_empty(), "{answer:?}");
     let set = node
         .create_client::<SetParameters>("natnet/set_parameters")
         .unwrap();

@@ -790,7 +790,8 @@ mod tests {
         let scene = Scene::new(SyntheticConfig::default()).unwrap();
         let mut p = Processor::new(cfg);
         p.set_server_info(&scene.server_info(false, 0, [0; 4]));
-        assert!(p.set_model(&scene.model_def(), scene.version()).is_empty());
+        let problems = p.set_model(&scene.model_def(), scene.version());
+        assert!(problems.is_empty(), "{problems:?}");
         (p, scene)
     }
 
@@ -827,7 +828,10 @@ mod tests {
         assert_eq!((s.markers[0].model_id, s.markers[0].member_id), (1, 1));
         assert!(!s.markers[12].labeled());
         // Model marker offsets land on the streamed marker positions.
-        assert!(!s.bodies[0].markers.is_empty());
+        assert!(
+            !s.bodies[0].markers.is_empty(),
+            "body 0 has no model markers"
+        );
         for (m, streamed) in s.bodies[0].markers.iter().zip(&s.markers) {
             assert!(
                 close(*m, streamed.position),
@@ -885,7 +889,10 @@ mod tests {
         let s = p
             .process(&scene.frame(11), SystemTime::now(), Instant::now())
             .unwrap();
-        assert!(!s.bodies[0].markers.is_empty());
+        assert!(
+            !s.bodies[0].markers.is_empty(),
+            "body 0 has no model markers"
+        );
     }
 
     #[test]

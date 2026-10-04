@@ -487,7 +487,8 @@ mod tests {
         let ros = list(&names, &["ros".into()], 1);
         assert_eq!(ros.names, vec!["ros.node_name".to_owned()]);
         assert_eq!(list(&names, &["ros".into()], 2).names.len(), 2);
-        assert!(list(&names, &["ro".into()], 0).names.is_empty());
+        let ro = list(&names, &["ro".into()], 0);
+        assert!(ro.names.is_empty(), "{:?}", ro.names);
         let ros_all = list(&names, &["ros".into()], 0);
         assert_eq!(ros_all.names.len(), 2);
     }
@@ -554,7 +555,8 @@ mod tests {
         };
         let cleared = check(&params, &[set("list", empty)]).unwrap();
         assert_eq!(cleared[0].value.r#type, ParameterValue::STRING_ARRAY);
-        assert!(cleared[0].value.string_array_value.is_empty());
+        let cleared_list = &cleared[0].value.string_array_value;
+        assert!(cleared_list.is_empty(), "{cleared_list:?}");
         // One bad parameter rejects the whole request.
         assert!(
             check(
