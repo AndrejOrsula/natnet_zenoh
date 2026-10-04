@@ -10,26 +10,22 @@ readme = "README.md"
 keywords = ["natnet", "optitrack", "zenoh", "ros2", "mocap"]
 categories = ["network-programming", "science::robotics"]
 default-run = "natnet_zenoh"
-# The `natnet` git dependency cannot be published to crates.io.
-publish = false
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+]
 
 [features]
-default = []
-# Additional zenoh link transports. The default build carries TCP and
-# Unix-socket links only, all pure Rust. UDP, TLS, QUIC and WebSocket links
-# pull a cryptography stack that is not pure Rust (`ring`, which needs a C
-# compiler), so they are opt-in. zenoh's UDP link always builds its QUIC
-# datagram sibling, hence `ring`.
 transport_udp = ["zenoh/transport_udp"]
 transport_tls = ["zenoh/transport_tls"]
 transport_quic = ["zenoh/transport_quic"]
 transport_ws = ["zenoh/transport_ws"]
-# zenoh user/password and public-key authentication, and link compression,
-# all pure Rust; configure them through a zenoh configuration file.
 auth_usrpwd = ["zenoh/auth_usrpwd"]
 auth_pubkey = ["zenoh/auth_pubkey"]
 transport_compression = ["zenoh/transport_compression"]
-# zenoh shared-memory transport for same-host subscribers.
 shared-memory = ["zenoh/shared-memory"]
 
 [[bin]]
@@ -53,12 +49,10 @@ clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 ctrlc = { version = "3.4", features = ["termination"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-# Multicast data sockets need SO_REUSEADDR (to coexist with other NatNet
-# clients on the host) and a larger receive buffer; std exposes neither.
+sha2 = "0.11"
 socket2 = "0.6"
 thiserror = "2"
-toml = "0.9"
+toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

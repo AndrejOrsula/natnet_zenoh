@@ -1,4 +1,0 @@
-[net]
-# `natnet` is a private git dependency; the git CLI uses the credentials the
-# machine already has (SSH agent, credential helper, CI token).
-git-fetch-with-cli = true

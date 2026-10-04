@@ -1,0 +1,36 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0041", reason = "lz4_flex: decompression only with `transport_compression`; README warns" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa: only with `auth_pubkey`; README warns" },
+    { id = "RUSTSEC-2026-0291", reason = "owned-alloc: only with `shared-memory`; needs a panicking Drop" },
+    { id = "RUSTSEC-2026-0299", reason = "owned-alloc unmaintained; only with `shared-memory`" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; used by zenoh-ext" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; proc macro used by zenoh-keyexpr" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; only with TLS-based links" },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained; serde_yaml in zenoh-config" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = ["https://github.com/AndrejOrsula/natnet.git"]
