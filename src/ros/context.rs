@@ -74,9 +74,10 @@ pub enum RmwZenohCompat {
     #[default]
     #[serde(rename = "current")]
     Current,
-    /// Humble (0.1.x): the current protocol, but Humble has no type hashes,
-    /// so key expressions and liveliness tokens carry
-    /// [`TYPE_HASH_NOT_SUPPORTED`] in their place.
+    /// Humble 0.1.2 and later: the current protocol, but Humble has no type
+    /// hashes, so key expressions and liveliness tokens carry
+    /// [`TYPE_HASH_NOT_SUPPORTED`] in their place. Humble 0.1.0 and 0.1.1,
+    /// with named-field attachments, are not supported.
     #[serde(rename = "humble")]
     Humble,
     /// Jazzy 0.2.3: named-field attachments, volatile as the default

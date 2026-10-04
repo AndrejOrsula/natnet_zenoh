@@ -90,7 +90,7 @@ pub struct BodySample {
     pub markers: Vec<[f64; 3]>,
 }
 
-/// One labeled marker.
+/// One marker from NatNet's labeled-markers section.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MarkerSample {
     /// Full marker id.
@@ -178,7 +178,7 @@ pub struct Snapshot {
     pub total_latency: Option<f64>,
     /// Rigid bodies passing the include/exclude filters.
     pub bodies: Vec<BodySample>,
-    /// Labeled markers.
+    /// Markers from NatNet's labeled-markers section, including unlabeled markers.
     pub markers: Vec<MarkerSample>,
     /// Skeletons.
     pub skeletons: Vec<SkeletonSample>,
@@ -393,15 +393,18 @@ impl Processor {
             && !self.exclude.iter().any(matches)
     }
 
-    fn rebuild_names(&mut self) {
-        let mut names = Names::default();
-        // Body frames must not shadow the world frame.
-        let mut taken: BTreeSet<String> = self
-            .world_frame
+    /// The world frame's token, which body frames must not shadow.
+    fn world_token(&self) -> BTreeSet<String> {
+        self.world_frame
             .strip_prefix(self.frame_prefix.as_str())
             .map(str::to_owned)
             .into_iter()
-            .collect();
+            .collect()
+    }
+
+    fn rebuild_names(&mut self) {
+        let mut names = Names::default();
+        let mut taken = self.world_token();
         for (&id, rb) in &self.model.rigid_bodies {
             let out = self
                 .rename
@@ -467,7 +470,10 @@ impl Processor {
         }
         self.unknown.insert(format!("rigid body {id}"));
         let motive = format!("rigid_body_{id}");
-        let token = motive.clone();
+        // A modeled body may already be called that.
+        let mut taken = self.world_token();
+        taken.extend(self.names.bodies.values().map(|n| n.token.clone()));
+        let token = unique(&mut taken, &motive, id);
         let n = BodyName {
             included: self.included(&motive, &token),
             frame_id: format!("{}{token}", self.frame_prefix),

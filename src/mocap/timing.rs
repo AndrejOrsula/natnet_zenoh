@@ -184,8 +184,10 @@ impl Stamper {
             _ => None,
         };
 
-        if let (Some(tx), Some(last)) = (Some(timing.transmit), self.last_transmit)
-            && tx < last
+        // A frame without ticks (0) says nothing about the server clock.
+        if timing.transmit > 0
+            && let Some(last) = self.last_transmit
+            && timing.transmit < last
         {
             // The server clock went backwards (Motive restarted).
             self.offset.clear();
@@ -300,6 +302,17 @@ mod tests {
         s.stamp(&timing(50.0, 50.0), at(100.0));
         assert!(
             (s.stamp(&timing(50.1, 50.1), at(100.1))
+                .clock_offset
+                .unwrap()
+                - 50.0)
+                .abs()
+                < 1e-6
+        );
+        // A frame without ticks is no restart: the estimate survives it,
+        // so a later, slower datagram does not raise it.
+        s.stamp(&timing(0.0, 0.0), at(100.15));
+        assert!(
+            (s.stamp(&timing(50.2, 50.2), at(100.25))
                 .clock_offset
                 .unwrap()
                 - 50.0)

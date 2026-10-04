@@ -478,15 +478,12 @@ impl Model {
     }
 }
 
-/// Encoders of the opaque dataset bodies, for synthetic sources and tests.
+/// Encoders of the dataset descriptions, for synthetic sources and tests.
 pub mod encode {
-    use natnet::{DataSet, RigidBodyDef, Version};
+    use natnet::{DataSet, DeviceDef, ForcePlateDef, RigidBodyDef, SkeletonDef, Version};
 
     use super::{DeviceDesc, ForcePlateDesc};
-    use super::{
-        MarkerDesc, RigidBodyDesc, SkeletonDesc, TYPE_DEVICE, TYPE_FORCE_PLATE, TYPE_SKELETON,
-        Writer, marker_names,
-    };
+    use super::{MarkerDesc, RigidBodyDesc, SkeletonDesc, Writer, marker_names};
 
     fn tail(w: &mut Writer, markers: &[MarkerDesc], version: Version) {
         w.count(markers.len());
@@ -503,79 +500,75 @@ pub mod encode {
         }
     }
 
-    /// A rigid-body dataset.
-    #[must_use]
-    pub fn rigid_body(desc: &RigidBodyDesc, version: Version) -> DataSet {
+    fn rigid_body_def(desc: &RigidBodyDesc, version: Version) -> RigidBodyDef {
         let mut w = Writer::default();
         tail(&mut w, &desc.markers, version);
-        DataSet::RigidBody(RigidBodyDef {
+        RigidBodyDef {
             name: desc.name.clone(),
             id: desc.id,
             parent_id: desc.parent_id,
             offset: desc.offset,
             tail: w.bytes,
-        })
+        }
+    }
+
+    /// A rigid-body dataset.
+    #[must_use]
+    pub fn rigid_body(desc: &RigidBodyDesc, version: Version) -> DataSet {
+        DataSet::RigidBody(rigid_body_def(desc, version))
     }
 
     /// A skeleton dataset.
     #[must_use]
     pub fn skeleton(desc: &SkeletonDesc, version: Version) -> DataSet {
-        let mut w = Writer::default();
-        w.cstr(&desc.name).i32(desc.id).count(desc.bones.len());
-        for b in &desc.bones {
-            w.cstr(&b.name).i32(b.id).i32(b.parent_id).f32s(&b.offset);
-            tail(&mut w, &b.markers, version);
-        }
-        DataSet::Other {
-            type_id: TYPE_SKELETON,
-            body: w.bytes,
-        }
+        DataSet::Skeleton(SkeletonDef {
+            name: desc.name.clone(),
+            id: desc.id,
+            rigid_bodies: desc
+                .bones
+                .iter()
+                .map(|bone| rigid_body_def(bone, version))
+                .collect(),
+        })
     }
 
-    /// A force-plate dataset.
+    /// A force-plate dataset. Calibration values past 144 are dropped and
+    /// missing ones are zero.
     #[must_use]
     pub fn force_plate(desc: &ForcePlateDesc) -> DataSet {
-        let mut w = Writer::default();
-        w.i32(desc.id)
-            .cstr(&desc.serial)
-            .f32(desc.width)
-            .f32(desc.length)
-            .f32s(&desc.origin);
-        let mut calibration = desc.calibration.clone();
-        calibration.resize(144, 0.0);
-        w.f32s(&calibration);
-        for c in &desc.corners {
-            w.f32s(c);
+        let mut calibration_matrix = [[0.0; 12]; 12];
+        for (cell, value) in calibration_matrix
+            .as_flattened_mut()
+            .iter_mut()
+            .zip(&desc.calibration)
+        {
+            *cell = *value;
         }
-        w.i32(desc.plate_type)
-            .i32(desc.channel_data_type)
-            .count(desc.channel_names.len());
-        for n in &desc.channel_names {
-            w.cstr(n);
-        }
-        DataSet::Other {
-            type_id: TYPE_FORCE_PLATE,
-            body: w.bytes,
-        }
+        DataSet::ForcePlate(Box::new(ForcePlateDef {
+            id: desc.id,
+            serial_number: desc.serial.clone(),
+            width: desc.width,
+            length: desc.length,
+            origin: desc.origin,
+            calibration_matrix,
+            corners: desc.corners,
+            plate_type: desc.plate_type,
+            channel_data_type: desc.channel_data_type,
+            channel_names: desc.channel_names.clone(),
+        }))
     }
 
     /// A device dataset.
     #[must_use]
     pub fn device(desc: &DeviceDesc) -> DataSet {
-        let mut w = Writer::default();
-        w.i32(desc.id)
-            .cstr(&desc.name)
-            .cstr(&desc.serial)
-            .i32(desc.device_type)
-            .i32(desc.channel_data_type)
-            .count(desc.channel_names.len());
-        for n in &desc.channel_names {
-            w.cstr(n);
-        }
-        DataSet::Other {
-            type_id: TYPE_DEVICE,
-            body: w.bytes,
-        }
+        DataSet::Device(DeviceDef {
+            id: desc.id,
+            name: desc.name.clone(),
+            serial_number: desc.serial.clone(),
+            device_type: desc.device_type,
+            channel_data_type: desc.channel_data_type,
+            channel_names: desc.channel_names.clone(),
+        })
     }
 }
 
@@ -687,7 +680,7 @@ mod tests {
             // is the same.
             let natnet::Message::ModelDef(parsed) = natnet::Decoder::new(version)
                 .unwrap()
-                .parse(&md.to_datagram_version(version).unwrap())
+                .parse(&md.to_datagram(version).unwrap())
                 .unwrap()
                 .into_message()
             else {

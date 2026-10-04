@@ -18,9 +18,9 @@
 //! varint(10) "source_gid"       varint(16) [u8; 16]
 //! ```
 //!
-//! A subscriber that cannot parse the format it expects throws inside a
-//! zenoh callback, which aborts the whole ROS 2 process, so the encoder
-//! writes exactly one format and the decoder accepts both.
+//! A peer that cannot parse the format it expects throws inside a zenoh
+//! callback, aborting its ROS 2 process. So the encoder writes exactly one
+//! format, and the decoder accepts both.
 
 use super::gid::Gid;
 

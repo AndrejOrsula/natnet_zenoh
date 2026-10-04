@@ -37,7 +37,7 @@ impl Log {
 }
 
 crate::ros_message! {
-    /// A parameter value; `type` selects the populated field
+    /// A parameter value; `type` selects which value field is populated
     /// (`rcl_interfaces/msg/ParameterValue`).
     pub struct ParameterValue("rcl_interfaces/msg/ParameterValue") {
         /// One of the `ParameterValue::*` type constants.
@@ -149,11 +149,11 @@ crate::ros_message! {
         pub stamp: Time,
         /// Fully qualified node name.
         pub node: String,
-        /// Declared parameters.
+        /// Newly declared parameters.
         pub new_parameters: Vec<Parameter>,
         /// Changed parameters.
         pub changed_parameters: Vec<Parameter>,
-        /// Undeclared parameters.
+        /// Deleted parameters.
         pub deleted_parameters: Vec<Parameter>,
     }
 }

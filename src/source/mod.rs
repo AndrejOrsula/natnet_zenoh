@@ -17,8 +17,7 @@ pub mod replay;
 pub mod server;
 pub mod synthetic;
 
-/// The NAT_KEEPALIVE message id (not modelled by `natnet`).
-pub const NAT_KEEPALIVE: u16 = 10;
+pub use natnet::NAT_KEEPALIVE;
 
 /// Connection state changes.
 #[derive(Debug, Clone, PartialEq, Eq)]

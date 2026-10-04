@@ -73,12 +73,12 @@ impl ReplayConfig {
     }
 }
 
-/// Scans the start of a capture for SERVERINFO and MODELDEF datagrams.
+/// Scans up to 20,000 records for SERVERINFO and MODELDEF datagrams.
 fn scan(cfg: &ReplayConfig) -> std::io::Result<(Option<ServerInfo>, Option<Vec<u8>>)> {
     let mut info = None;
     let mut model = None;
     for record in CaptureReader::open(&cfg.path)?.take(20_000) {
-        // A truncated tail (a killed recorder) ends the scan, not the replay.
+        // A read error ends the scan; replay reports it when it reaches that record.
         let Ok(record) = record else { break };
         match record
             .bytes
@@ -218,15 +218,20 @@ pub fn run(cfg: &ReplayConfig, ctx: &SourceContext, commands: &Receiver<SourceCo
                 continue;
             }
             if cfg.rate > 0.0 {
-                // Long pauses in the recording are skipped, not waited out.
-                if let Some(l) = last
-                    && record.time_ns.saturating_sub(l) > MAX_PAUSE_NS
-                {
-                    warn!(
-                        "skipping a {:.0} s pause in the capture",
-                        record.time_ns.saturating_sub(l) as f64 * 1e-9
-                    );
-                    origin = None;
+                // Long pauses in the recording are skipped, not waited out;
+                // after a step back, pacing restarts rather than racing
+                // through the records until time catches up.
+                if let Some(l) = last {
+                    if record.time_ns.saturating_sub(l) > MAX_PAUSE_NS {
+                        warn!(
+                            "skipping a {:.0} s pause in the capture",
+                            record.time_ns.saturating_sub(l) as f64 * 1e-9
+                        );
+                        origin = None;
+                    } else if record.time_ns < l {
+                        warn!("the capture's time steps back; pacing restarts");
+                        origin = None;
+                    }
                 }
                 last = Some(record.time_ns);
                 let (o_t, o_wall) = *origin.get_or_insert((record.time_ns, Instant::now()));

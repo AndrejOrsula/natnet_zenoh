@@ -33,10 +33,7 @@ name = "natnet_zenoh"
 path = "src/main.rs"
 
 [dependencies]
-# The sans-io NatNet protocol core and its std-UDP clients, pinned to a
-# published commit. Build against a local checkout instead with
-# `cargo --config 'patch."https://github.com/AndrejOrsula/natnet.git".natnet.path="../natnet"' ...`.
-natnet = { git = "https://github.com/AndrejOrsula/natnet.git", rev = "6637d7493a7a3b279d205f52ad50f72c181e6e94", features = ["net", "serde"] }
+natnet = { version = "0.1", features = ["net", "serde"] }
 zenoh = { version = "1.10", default-features = false, features = [
     "transport_tcp",
     "transport_unixsock-stream",

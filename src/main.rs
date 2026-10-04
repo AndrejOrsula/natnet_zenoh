@@ -237,7 +237,7 @@ struct RecordArgs {
     /// Output capture file.
     #[arg(long, short = 'o')]
     output: PathBuf,
-    /// Container.
+    /// Capture format (NatNet by default).
     #[arg(long, value_enum, default_value_t = FormatArg::Natnet)]
     format: FormatArg,
     /// Stop after this many seconds (default: until Ctrl-C).
@@ -320,9 +320,21 @@ fn init_logging() -> RosoutHandle {
     handle
 }
 
+/// Writes command output to stdout. A closed reader (`| head`) is not an
+/// error: the output is simply not wanted any more.
+fn emit(text: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(format!("stdout: {e}")),
+        _ => Ok(()),
+    }
+}
+
+/// Reads the configuration file, unvalidated: options override it first.
 fn load_config(path: Option<&PathBuf>) -> Result<Config, String> {
     match path {
-        Some(p) => Config::load(p).map_err(|e| e.to_string()),
+        Some(p) => Config::read(p).map_err(|e| e.to_string()),
         None => Ok(Config::default()),
     }
 }
@@ -359,10 +371,7 @@ fn live_config(args: &LiveArgs) -> Result<Config, String> {
     let mut cfg = load_config(args.config_path().as_ref())?;
     args.apply(&mut cfg);
     cfg.source.kind = SourceKind::Live;
-    cfg.source
-        .live
-        .validate()
-        .map_err(|e| format!("source.live: {e}"))?;
+    cfg.validate().map_err(|e| e.to_string())?;
     check_files(&cfg)?;
     Ok(cfg)
 }
@@ -531,14 +540,12 @@ fn probe(args: &ProbeArgs) -> Result<(), String> {
         "errors": errors,
     });
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
-        );
+        let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+        emit(&format!("{json}\n"))?;
     } else {
-        println!("server:   {info_json}");
+        let mut lines = vec![format!("server:   {info_json}")];
         let m = processor.model();
-        println!(
+        lines.push(format!(
             "model:    {} rigid bodies, {} skeletons, {} force plates, {} devices, {} cameras, {} assets",
             m.rigid_bodies.len(),
             m.skeletons.len(),
@@ -546,49 +553,48 @@ fn probe(args: &ProbeArgs) -> Result<(), String> {
             m.devices.len(),
             m.cameras.len(),
             m.assets.len()
-        );
+        ));
         for rb in m.rigid_bodies.values() {
-            println!(
+            lines.push(format!(
                 "  rigid body {:>4}  {:<24} {} markers",
                 rb.id,
                 rb.name,
                 rb.markers.len()
-            );
+            ));
         }
-        println!(
+        lines.push(format!(
             "frames:   {} ({:.1} Hz, {} dropped, {} late, {} restarts)",
             stats.frames,
             report["frame_rate"].as_f64().unwrap_or_default(),
             stats.dropped_frames,
             stats.late_frames,
             stats.resets
-        );
+        ));
         if let Some(s) = &last_snapshot {
             for b in &s.bodies {
-                match b.pose {
-                    Some(p) => println!(
+                lines.push(match b.pose {
+                    Some(p) => format!(
                         "  {:<24} [{:+.4}, {:+.4}, {:+.4}] m",
                         b.name, p.position[0], p.position[1], p.position[2]
                     ),
-                    None => println!("  {:<24} not tracked", b.name),
-                }
+                    None => format!("  {:<24} not tracked", b.name),
+                });
             }
-            println!(
+            lines.push(format!(
                 "markers:  {} labeled",
                 s.markers.iter().filter(|m| m.labeled()).count()
-            );
+            ));
         }
         let ms =
             |v: Option<f64>| v.map_or_else(|| "n/a".to_owned(), |v| format!("{:.2} ms", v * 1e3));
-        println!(
+        lines.push(format!(
             "latency:  server {}, total {}, clock offset {}",
             ms(stats.server_latency),
             ms(stats.total_latency),
             ms(stats.clock_offset)
-        );
-        for e in &errors {
-            println!("error:    {e}");
-        }
+        ));
+        lines.extend(errors.iter().map(|e| format!("error:    {e}")));
+        emit(&(lines.join("\n") + "\n"))?;
     }
     if stats.frames == 0 {
         return Err("no frames received".into());
@@ -723,13 +729,13 @@ fn record(args: &RecordArgs) -> Result<(), String> {
         return Err(format!("write failed: {e}"));
     }
     w.writer.flush().map_err(|e| e.to_string())?;
-    println!(
-        "{} datagrams ({} frames), {} bytes written to {}",
+    emit(&format!(
+        "{} datagrams ({} frames), {} bytes written to {}\n",
         w.datagrams,
         w.frames,
         w.bytes,
         args.output.display()
-    );
+    ))?;
     let dropped = dropped.load(Ordering::Relaxed);
     if dropped > 0 {
         warn!("{dropped} datagrams were not recorded: the disk did not keep up");
@@ -765,15 +771,15 @@ fn serve(args: &ServeArgs) -> Result<(), String> {
         .protocol_version
         .clone_from(&args.protocol_version);
     let server = SimServer::spawn(cfg).map_err(|e| e.to_string())?;
-    println!(
-        "simulated NatNet server on {} ({}); Ctrl-C to stop",
+    emit(&format!(
+        "simulated NatNet server on {} ({}); Ctrl-C to stop\n",
         server.command_addr(),
         if args.unicast {
             "unicast".to_owned()
         } else {
             format!("multicast {}:{}", args.multicast_group, args.data_port)
         }
-    );
+    ))?;
     let stop = stop_flag();
     let mut last = Instant::now();
     while !stop.load(Ordering::Relaxed) && server.is_running() {
@@ -793,8 +799,7 @@ fn check(path: &Path) -> Result<(), String> {
     let cfg = Config::load(path).map_err(|e| e.to_string())?;
     cfg.validate_all().map_err(|e| e.to_string())?;
     check_files(&cfg)?;
-    println!("{}: ok", path.display());
-    Ok(())
+    emit(&format!("{}: ok\n", path.display()))
 }
 
 fn main() -> ExitCode {
@@ -805,16 +810,14 @@ fn main() -> ExitCode {
         Command::Probe(args) => probe(args),
         Command::Record(args) => record(args),
         Command::Serve(args) => serve(args),
-        Command::Config => {
-            print!("{}", Config::default_toml());
-            Ok(())
-        }
+        Command::Config => emit(&Config::default_toml()),
         Command::Check { config } => check(config),
         Command::Types => {
-            for (name, hash) in natnet_zenoh::ros::msgs::catalog() {
-                println!("{name:<40} {hash}");
-            }
-            Ok(())
+            let lines: Vec<String> = natnet_zenoh::ros::msgs::catalog()
+                .into_iter()
+                .map(|(name, hash)| format!("{name:<40} {hash}"))
+                .collect();
+            emit(&(lines.join("\n") + "\n"))
         }
     };
     match result {

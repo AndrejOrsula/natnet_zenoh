@@ -3,9 +3,9 @@
 use super::std_msgs::Header;
 
 crate::ros_message! {
-    /// One channel of a [`PointCloud2`] point (`sensor_msgs/msg/PointField`).
+    /// One field of a [`PointCloud2`] point (`sensor_msgs/msg/PointField`).
     pub struct PointField("sensor_msgs/msg/PointField") {
-        /// Channel name, e.g. `x`.
+        /// Field name, e.g. `x`.
         pub name: String,
         /// Byte offset within the point.
         pub offset: u32,
@@ -25,7 +25,7 @@ crate::ros_message! {
         pub height: u32,
         /// Points per row.
         pub width: u32,
-        /// Channel layout.
+        /// Point-field definitions and byte offsets.
         pub fields: Vec<PointField>,
         /// Whether `data` is big-endian.
         pub is_bigendian: bool,
@@ -35,7 +35,7 @@ crate::ros_message! {
         pub row_step: u32,
         /// Packed points.
         pub data: Vec<u8>,
-        /// True when there are no invalid points.
+        /// Whether there are no invalid points.
         pub is_dense: bool,
     }
 }

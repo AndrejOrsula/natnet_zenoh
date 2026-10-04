@@ -1,7 +1,7 @@
 //! In-process tests of the ROS 2 layer over real zenoh sessions linked by
 //! TCP on the loopback interface.
 
-// Helpers outside `#[test]` functions share the tests' panicking style.
+// Shared helpers use panicking assertions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::net::TcpListener;

@@ -1,15 +1,11 @@
-//! The native zenoh JSON documents against the references in
-//! `tests/golden/native/`.
+//! Checks native zenoh JSON against `tests/golden/native/`.
 //!
-//! The references pin format `natnet_zenoh.v1`: renaming, removing or
-//! retyping a field fails here, and so does a changed value. Each document is
-//! built from the synthetic scene with fixed receive times, so it is
-//! deterministic. Floats are compared after rounding to six significant
-//! digits, so a last-bit difference in a platform's `sin` does not fail the
-//! test. After an intended, additive change, rewrite the references with
+//! The references pin `natnet_zenoh.v1` fields and values. Fixed synthetic
+//! inputs make documents deterministic; floats are rounded to six significant
+//! digits. For an intended additive change, regenerate with
 //! `NATNET_ZENOH_BLESS=1 cargo test --test native_golden` and review the diff.
 
-// Helpers outside `#[test]` functions share the tests' panicking style.
+// Shared helpers use panicking assertions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::PathBuf;
@@ -74,7 +70,7 @@ fn scene() -> (Scene, Processor, Snapshot) {
     processor.set_server_info(&scene.server_info(true, 1511, [239, 255, 42, 99]));
     // The model goes through the wire, as a live server's does.
     let version = scene.version();
-    let datagram = scene.model_def().to_datagram_version(version).unwrap();
+    let datagram = scene.model_def().to_datagram(version).unwrap();
     let natnet::Message::ModelDef(model) = natnet::Decoder::new(version)
         .unwrap()
         .parse(&datagram)

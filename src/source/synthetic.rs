@@ -127,8 +127,8 @@ impl Scene {
             return Err("synthetic rigid_bodies and markers_per_body must be at most 1000".into());
         }
         let scene = Self { cfg, version };
-        // The checked encoders refuse a payload over 65 535 bytes outright;
-        // that is the same limit, reported below.
+        // Checked encoders refuse payloads over 65,535 bytes; report that as
+        // a size so the datagram-limit check below names it.
         let size = |encoded: natnet::Result<Vec<u8>>| match encoded {
             Ok(bytes) => Ok(bytes.len()),
             Err(natnet::Error::LengthOverflow {
@@ -139,7 +139,7 @@ impl Scene {
             Err(e) => Err(e.to_string()),
         };
         let frame = size(scene.frame_datagram(0))?;
-        let model = size(scene.model_def().to_datagram_version(version))?;
+        let model = size(scene.model_def().to_datagram(version))?;
         let largest = frame.max(model);
         if largest > MAX_RECORD {
             return Err(format!(
@@ -494,7 +494,7 @@ pub fn run(scene: &Scene, ctx: &SourceContext, commands: &Receiver<SourceCommand
         let md = scene.model_def();
         // Round-trip through the wire format as well.
         let md = match md
-            .to_datagram_version(version)
+            .to_datagram(version)
             .and_then(|d| decoder.parse(&d))
             .map(natnet::DecodedMessage::into_message)
         {
@@ -621,7 +621,7 @@ mod tests {
 
             let md = scene.model_def();
             let Message::ModelDef(md) = decoder
-                .parse(&md.to_datagram_version(version).unwrap())
+                .parse(&md.to_datagram(version).unwrap())
                 .unwrap()
                 .into_message()
             else {

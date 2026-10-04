@@ -3,8 +3,9 @@
 //!
 //! It answers `NAT_CONNECT` with SERVERINFO, `NAT_REQUEST_MODELDEF` with the
 //! model definition, `NAT_REQUEST_FRAMEOFDATA` with the latest frame and
-//! `NAT_REQUEST` with a success response. Unicast clients receive frames on
-//! their command socket and are forgotten when their keepalives stop.
+//! `NAT_REQUEST` with a success response. Unicast clients (up to 64) receive
+//! frames on their command socket and are forgotten when their keepalives
+//! stop.
 //!
 //! A unicast scene server honours the bitstream version a `NAT_CONNECT`
 //! requests, as the vendor SDK client expects of a NatNet 3+ server: frames
@@ -29,6 +30,9 @@ use tracing::{debug, info, warn};
 use super::NAT_KEEPALIVE;
 use super::capture::{CaptureReader, MAX_PAUSE_NS};
 use super::synthetic::{Pacer, Scene, SyntheticConfig};
+
+/// Unicast clients streamed to at once.
+const MAX_CLIENTS: usize = 64;
 
 /// Simulated server settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,15 +146,16 @@ impl SimServer {
         state.model = if let Some(path) = &state.cfg.model_file {
             Some(std::fs::read(path)?)
         } else {
-            match &state.feed {
-                Feed::Scene { .. } => state.scene.model_def().to_datagram_version(version).ok(),
-                Feed::Capture { model: Some(m), .. } => Some(m.clone()),
-                // The scene's model would misname the capture's assets.
-                Feed::Capture { model: None, .. } => natnet::ModelDef {
-                    datasets: Vec::new(),
-                }
-                .to_datagram_version(version)
-                .ok(),
+            match &mut state.feed {
+                Feed::Scene { .. } => state.scene.model_def().to_datagram(version).ok(),
+                Feed::Capture { model, .. } => model.take().or_else(|| {
+                    // The scene's model would misname the capture's assets.
+                    natnet::ModelDef {
+                        datasets: Vec::new(),
+                    }
+                    .to_datagram(version)
+                    .ok()
+                }),
             }
         };
         let thread = {
@@ -390,13 +395,19 @@ impl State {
                         }
                     }
                 };
-                // Long pauses in the recording are skipped, not waited out.
-                if last.is_some_and(|l| t.saturating_sub(l) > MAX_PAUSE_NS) {
-                    warn!(
-                        "skipping a {:.0} s pause in the capture",
-                        t.saturating_sub(last.unwrap_or(t)) as f64 * 1e-9
-                    );
-                    *origin = None;
+                // Long pauses in the recording are skipped, not waited out;
+                // after a step back, pacing restarts.
+                if let Some(l) = *last {
+                    if t.saturating_sub(l) > MAX_PAUSE_NS {
+                        warn!(
+                            "skipping a {:.0} s pause in the capture",
+                            t.saturating_sub(l) as f64 * 1e-9
+                        );
+                        *origin = None;
+                    } else if t < l {
+                        warn!("the capture's time steps back; pacing restarts");
+                        *origin = None;
+                    }
                 }
                 *last = Some(t);
                 let (t0, wall0) = *origin.get_or_insert((t, Instant::now()));
@@ -447,13 +458,24 @@ impl State {
         }
     }
 
-    fn touch(&mut self, from: SocketAddr) {
-        if let Some(c) = self.clients.iter_mut().find(|(a, _)| *a == from) {
+    /// Records a unicast client's hello or keepalive; false when the client
+    /// is new and the server already has [`MAX_CLIENTS`]. Multicast needs
+    /// no list.
+    fn touch(&mut self, from: SocketAddr) -> bool {
+        if self.cfg.multicast {
+            info!("client {from} connected");
+        } else if let Some(c) = self.clients.iter_mut().find(|(a, _)| *a == from) {
             c.1 = Instant::now();
-        } else {
+        } else if self.clients.len() < MAX_CLIENTS {
             info!("client {from} connected");
             self.clients.push((from, Instant::now()));
+        } else {
+            // A flood of (possibly spoofed) hellos must not multiply the
+            // frames this server sends.
+            debug!("client {from} ignored: {MAX_CLIENTS} clients connected");
+            return false;
         }
+        true
     }
 
     /// Streams the bitstream version a `NAT_CONNECT` asks for, where this
@@ -486,7 +508,7 @@ impl State {
             Ok(stream) => {
                 info!("{from} connected; streaming bitstream {version}");
                 if self.cfg.model_file.is_none() {
-                    self.model = stream.model_def().to_datagram_version(version).ok();
+                    self.model = stream.model_def().to_datagram(version).ok();
                 }
                 self.stream = stream;
                 self.restreamed = true;
@@ -505,8 +527,9 @@ impl State {
         }
         let id = u16::from_le_bytes([request[0], request[1]]);
         let reply = match id {
+            // A client over the limit is not answered, so it retries.
+            natnet::NAT_CONNECT if !self.touch(from) => None,
             natnet::NAT_CONNECT => {
-                self.touch(from);
                 self.honour_request(request, from);
                 let group = self.cfg.multicast_group.octets();
                 self.scene

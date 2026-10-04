@@ -27,7 +27,8 @@ crate::ros_message! {
 }
 
 crate::ros_message! {
-    /// An orientation as a unit quaternion (`geometry_msgs/msg/Quaternion`).
+    /// An orientation quaternion, expected to have unit length
+    /// (`geometry_msgs/msg/Quaternion`).
     /// [`Default`] is the identity, as the IDL defaults say.
     pub struct Quaternion("geometry_msgs/msg/Quaternion") {
         /// X.

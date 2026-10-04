@@ -1,7 +1,7 @@
 //! End-to-end: a synthetic or replayed NatNet source through the bridge to
 //! ROS 2 and native zenoh consumers in a second in-process zenoh session.
 
-// Helpers outside `#[test]` functions share the tests' panicking style.
+// Shared helpers use panicking assertions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::net::TcpListener;
@@ -281,10 +281,7 @@ fn replay_runs_to_the_end_without_ros() {
     let path =
         std::env::temp_dir().join(format!("natnet_zenoh_bridge_{}.natnet", std::process::id()));
     let mut w = CaptureWriter::create(&path, Format::NatNet).unwrap();
-    let md = scene
-        .model_def()
-        .to_datagram_version(scene.version())
-        .unwrap();
+    let md = scene.model_def().to_datagram(scene.version()).unwrap();
     w.write(&Record {
         time_ns: 0,
         source: None,

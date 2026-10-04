@@ -211,16 +211,14 @@ impl Dispatcher {
                     ),
                 }
             }
-            natnet::NAT_MESSAGESTRING => {
-                let payload = datagram.get(4..).unwrap_or_default();
-                let end = payload
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(payload.len());
-                let text =
-                    String::from_utf8_lossy(payload.get(..end).unwrap_or_default()).into_owned();
-                deliver(ctx, SourceEvent::ServerMessage(text), Outcome::Text)
-            }
+            natnet::NAT_MESSAGESTRING => match natnet::parse_message_string(datagram) {
+                Ok(text) => deliver(ctx, SourceEvent::ServerMessage(text), Outcome::Text),
+                Err(e) => deliver(
+                    ctx,
+                    SourceEvent::DecodeError(format!("MESSAGESTRING: {e}")),
+                    Outcome::Error,
+                ),
+            },
             other => Outcome::Ignored(other),
         }
     }

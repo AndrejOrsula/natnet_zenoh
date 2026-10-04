@@ -1,7 +1,7 @@
 //! Sources end to end: the live client against the simulated server, and
 //! capture replay.
 
-// Helpers outside `#[test]` functions share the tests' panicking style.
+// Shared helpers use panicking assertions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::net::Ipv4Addr;
@@ -378,10 +378,7 @@ fn replay_both_containers() {
             bytes: info,
         })
         .unwrap();
-        let md = scene
-            .model_def()
-            .to_datagram_version(scene.version())
-            .unwrap();
+        let md = scene.model_def().to_datagram(scene.version()).unwrap();
         w.write(&Record {
             time_ns: 1,
             source: None,
@@ -473,6 +470,51 @@ fn replay_skips_long_pauses() {
 }
 
 #[test]
+fn replay_paces_after_a_corrupt_timestamp() {
+    let scene = Scene::new(SyntheticConfig::default()).unwrap();
+    let path = temp_path("step_back.cap");
+    let mut w = CaptureWriter::create(&path, Format::NatNet).unwrap();
+    // One corrupt timestamp (a 90 s spike), then time steps back to normal:
+    // the last three frames still play 300 ms apart.
+    let times = [
+        0,
+        300_000_000,
+        90_000_000_000,
+        400_000_000,
+        700_000_000,
+        1_000_000_000,
+    ];
+    for (n, time_ns) in times.into_iter().enumerate() {
+        w.write(&Record {
+            time_ns,
+            source: None,
+            bytes: scene.frame_datagram(i32::try_from(n).unwrap()).unwrap(),
+        })
+        .unwrap();
+    }
+    w.flush().unwrap();
+    drop(w);
+    let cfg = ReplayConfig {
+        path: path.clone(),
+        rate: 1.0,
+        ..ReplayConfig::default()
+    };
+    let start = Instant::now();
+    let h = SourceHandle::spawn("replay", 16, move |ctx, cmds| {
+        replay::run(&cfg, &ctx, &cmds);
+    })
+    .unwrap();
+    let seen = collect(&h, |s| s.finished >= 1, Duration::from_secs(10));
+    assert_eq!(seen.frames, 6, "{seen:?}");
+    assert!(
+        start.elapsed() >= Duration::from_millis(850),
+        "{:?}",
+        start.elapsed()
+    );
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
 fn server_capture_feed_serves_matching_model() {
     let scene = Scene::new(SyntheticConfig::default()).unwrap();
     let capture = temp_path("server_feed.natnet");
@@ -490,10 +532,7 @@ fn server_capture_feed_serves_matching_model() {
     let model_file = temp_path("server_feed.modeldef");
     std::fs::write(
         &model_file,
-        scene
-            .model_def()
-            .to_datagram_version(scene.version())
-            .unwrap(),
+        scene.model_def().to_datagram(scene.version()).unwrap(),
     )
     .unwrap();
 

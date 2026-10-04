@@ -38,8 +38,8 @@ pub struct Asset {
 pub struct AnalogFrame {
     /// Device id.
     pub id: i32,
-    /// Per channel, the samples received in this mocap frame (analog
-    /// devices usually sample faster than the cameras).
+    /// Samples per channel in this frame (analog devices usually outsample
+    /// cameras).
     pub channels: Vec<Vec<f32>>,
 }
 
@@ -100,7 +100,7 @@ fn items<T>(
 /// Decodes the skeleton section.
 ///
 /// # Errors
-/// A [`ReadError`] for a malformed body.
+/// Returns [`ReadError`] for a malformed body.
 pub fn skeletons(section: &RawSection) -> Result<Vec<Skeleton>, ReadError> {
     items(section, |r| {
         let id = r.i32()?;
@@ -113,7 +113,7 @@ pub fn skeletons(section: &RawSection) -> Result<Vec<Skeleton>, ReadError> {
 /// Decodes the asset section.
 ///
 /// # Errors
-/// A [`ReadError`] for a malformed body.
+/// Returns [`ReadError`] for a malformed body.
 pub fn assets(section: &RawSection) -> Result<Vec<Asset>, ReadError> {
     items(section, |r| {
         let id = r.i32()?;
@@ -134,7 +134,7 @@ pub fn assets(section: &RawSection) -> Result<Vec<Asset>, ReadError> {
 /// Decodes a force-plate or device section.
 ///
 /// # Errors
-/// A [`ReadError`] for a malformed body.
+/// Returns [`ReadError`] for a malformed body.
 pub fn analog(section: &RawSection) -> Result<Vec<AnalogFrame>, ReadError> {
     items(section, |r| {
         let id = r.i32()?;

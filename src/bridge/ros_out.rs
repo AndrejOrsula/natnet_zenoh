@@ -32,8 +32,8 @@ use crate::ros::parameters::{Param, ParameterServer, SetHandler, flatten_json, j
 use crate::ros::{Message, Node, Publisher, QosProfile, ServiceServer};
 use crate::source::SourceCommand;
 
-/// Paths are sampled and published at most this often: a full path per
-/// frame would cost megabytes per second per body.
+/// Path sampling and publishing period; a full path per frame would cost
+/// megabytes per second per body.
 const PATH_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Position variance floor for odometry covariance, m².

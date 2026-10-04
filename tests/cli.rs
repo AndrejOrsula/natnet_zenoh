@@ -1,7 +1,7 @@
 //! The command line: exit codes, argument checks and machine-readable output
 //! of the real binary.
 
-// Helpers outside `#[test]` functions share the tests' panicking style.
+// Shared helpers use panicking assertions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::net::UdpSocket;
@@ -35,10 +35,7 @@ fn temp(name: &str) -> PathBuf {
 fn capture(path: &Path, frames: i32) {
     let scene = Scene::new(SyntheticConfig::default()).unwrap();
     let mut w = CaptureWriter::create(path, Format::NatNet).unwrap();
-    let md = scene
-        .model_def()
-        .to_datagram_version(scene.version())
-        .unwrap();
+    let md = scene.model_def().to_datagram(scene.version()).unwrap();
     w.write(&Record {
         time_ns: 0,
         source: None,
@@ -67,6 +64,12 @@ fn free_udp_port() -> u16 {
 fn default_configuration_checks_and_bad_values_fail() {
     let out = run(bin().arg("config"));
     assert!(out.status.success(), "{}", stderr(&out));
+    // An empty file would pass `check` too.
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("[source]\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let path = temp("default.toml");
     std::fs::write(&path, &out.stdout).unwrap();
     let out = run(bin().arg("check").arg(&path));
@@ -241,4 +244,48 @@ fn types_lists_hashes() {
         text.lines()
             .any(|l| l.starts_with("geometry_msgs/msg/PoseStamped") && l.contains("RIHS01_"))
     );
+}
+
+#[test]
+fn options_override_the_file_before_it_is_validated() {
+    // Invalid for the replay source and the ROS node the file selects, but
+    // `--synthetic --no-ros` uses neither.
+    let path = temp("overridden.toml");
+    std::fs::write(
+        &path,
+        "[source]\nkind = \"replay\"\n[ros]\nnode_name = \"bad name\"\n",
+    )
+    .unwrap();
+    let out = run(bin()
+        .args(["run", "--synthetic", "--no-ros", "--duration", "0.5", "-c"])
+        .arg(&path));
+    assert!(out.status.success(), "{}", stderr(&out));
+    // The file alone still fails.
+    let out = run(bin()
+        .args(["run", "--no-ros", "--duration", "0.5", "-c"])
+        .arg(&path));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn closed_stdout_is_not_a_crash() {
+    for command in ["types", "config"] {
+        // The read end is gone before the first write.
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let out = bin()
+            .arg(command)
+            .stdin(Stdio::null())
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{command}: {}", stderr(&out));
+        assert!(
+            !stderr(&out).contains("panicked"),
+            "{command}: {}",
+            stderr(&out)
+        );
+    }
 }

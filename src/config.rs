@@ -493,16 +493,25 @@ impl Config {
     /// # Errors
     /// I/O, parse and validation errors.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
+        let cfg = Self::read(path)?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Reads a configuration file without [validating](Self::validate) it,
+    /// for callers that change it first.
+    ///
+    /// # Errors
+    /// I/O and parse errors.
+    pub fn read(path: &Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
             path: path.to_owned(),
             source,
         })?;
-        let cfg: Self = toml::from_str(&text).map_err(|source| ConfigError::Parse {
+        toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_owned(),
             source: Box::new(source),
-        })?;
-        cfg.validate()?;
-        Ok(cfg)
+        })
     }
 
     /// The defaults as TOML.
@@ -511,8 +520,8 @@ impl Config {
         toml::to_string_pretty(&Self::default()).unwrap_or_default()
     }
 
-    /// Checks ranges and contradictions of the parts in use: the selected
-    /// source, and the ROS and native sections when enabled.
+    /// Checks the selected source, settings always in use, and enabled ROS
+    /// and native sections.
     ///
     /// # Errors
     /// [`ConfigError::Invalid`] naming the first problem.
