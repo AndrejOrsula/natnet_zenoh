@@ -417,7 +417,9 @@ impl State {
         }
     }
 
-    fn broadcast(&mut self, frame: &[u8]) {
+    /// Forgets unicast clients that sent no hello or keepalive for
+    /// `client_timeout_ms`.
+    fn expire_clients(&mut self) {
         let timeout = Duration::from_millis(self.cfg.client_timeout_ms);
         self.clients.retain(|(addr, seen)| {
             let alive = seen.elapsed() < timeout;
@@ -426,6 +428,10 @@ impl State {
             }
             alive
         });
+    }
+
+    fn broadcast(&mut self, frame: &[u8]) {
+        self.expire_clients();
         // Only frames that left the host count as sent.
         let mut sent = false;
         let mut failure = None;
@@ -525,6 +531,9 @@ impl State {
         if request.len() < 4 {
             return;
         }
+        // Not only when a frame goes out: a server with no frames to send
+        // must still free the places of departed clients.
+        self.expire_clients();
         let id = u16::from_le_bytes([request[0], request[1]]);
         let reply = match id {
             // A client over the limit is not answered, so it retries.

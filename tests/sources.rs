@@ -186,6 +186,113 @@ fn live_unicast_requests_a_bitstream_version() {
 }
 
 #[test]
+fn server_caps_unicast_clients() {
+    // Whether a hello from each of `n` sockets gets SERVERINFO.
+    let hellos = |multicast: bool, n: usize| -> Vec<bool> {
+        let server = SimServer::spawn(ServerConfig {
+            bind: Ipv4Addr::LOCALHOST,
+            command_port: 0,
+            data_port: free_port(),
+            multicast,
+            multicast_interface: Ipv4Addr::LOCALHOST,
+            scene: scene(),
+            ..ServerConfig::default()
+        })
+        .unwrap();
+        let hello = natnet::command::connect_request().unwrap();
+        let sockets: Vec<std::net::UdpSocket> = (0..n)
+            .map(|_| {
+                let s = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+                s.set_read_timeout(Some(Duration::from_millis(500)))
+                    .unwrap();
+                s.send_to(hello.as_bytes(), server.command_addr()).unwrap();
+                s
+            })
+            .collect();
+        sockets
+            .iter()
+            .map(|s| {
+                let mut buf = vec![0_u8; 65_536];
+                // Frames may follow; the answer is the first SERVERINFO.
+                while let Ok(len) = s.recv(&mut buf) {
+                    if len >= 2 && u16::from_le_bytes([buf[0], buf[1]]) == natnet::NAT_SERVERINFO {
+                        return true;
+                    }
+                }
+                false
+            })
+            .collect()
+    };
+    let unicast = hellos(false, 65);
+    assert!(unicast[..64].iter().all(|&ok| ok), "{unicast:?}");
+    assert!(!unicast[64], "the 65th unicast client was answered");
+    let multicast = hellos(true, 65);
+    assert!(multicast.iter().all(|&ok| ok), "{multicast:?}");
+}
+
+#[test]
+fn server_frees_places_of_silent_unicast_clients_without_frames() {
+    // One frame at start, the next 20 s later: no broadcast happens while the
+    // 64 clients below fall silent.
+    let rate_hz = 0.05;
+    let started = Instant::now();
+    let server = SimServer::spawn(ServerConfig {
+        bind: Ipv4Addr::LOCALHOST,
+        command_port: 0,
+        data_port: free_port(),
+        multicast: false,
+        client_timeout_ms: 2000,
+        scene: SyntheticConfig {
+            rate_hz,
+            ..SyntheticConfig::default()
+        },
+        ..ServerConfig::default()
+    })
+    .unwrap();
+    let hello = natnet::command::connect_request().unwrap();
+    // Whether a hello from `s` gets SERVERINFO.
+    let answered = |s: &std::net::UdpSocket| -> bool {
+        s.send_to(hello.as_bytes(), server.command_addr()).unwrap();
+        let mut buf = vec![0_u8; 65_536];
+        while let Ok(len) = s.recv(&mut buf) {
+            if len >= 2 && u16::from_le_bytes([buf[0], buf[1]]) == natnet::NAT_SERVERINFO {
+                return true;
+            }
+        }
+        false
+    };
+    let socket = || {
+        let s = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        s.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        s
+    };
+    let first: Vec<std::net::UdpSocket> = (0..64).map(|_| socket()).collect();
+    assert!(
+        first.iter().all(&answered),
+        "the first 64 clients were not all answered"
+    );
+    let late = socket();
+    assert!(
+        !answered(&late),
+        "a 65th client was answered while 64 were current"
+    );
+    std::thread::sleep(Duration::from_millis(2500));
+    assert!(answered(&late), "silent clients still hold every place");
+    // Only the expiry in `on_command` may have freed the places. The first
+    // frame went out before any hello, to an empty list, and is not counted;
+    // a later frame that reached a client would be. One due after the
+    // clients' timeout would have run the expiry in `broadcast` and reached
+    // nobody, so the test must also end before the second frame is due, a
+    // period after the server started.
+    assert_eq!(server.frames_sent(), 0, "a frame went out during the test");
+    assert!(
+        started.elapsed() < Duration::from_secs_f64(1.0 / rate_hz),
+        "the test outlasted the scene's frame period"
+    );
+}
+
+#[test]
 fn request_bitstream_needs_an_active_unicast_client() {
     let base = LiveConfig {
         server: Some(Ipv4Addr::LOCALHOST),
