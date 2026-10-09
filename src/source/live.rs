@@ -80,7 +80,8 @@ pub struct LiveConfig {
     /// Bitstream version to request in `NAT_CONNECT`, as the vendor SDK
     /// client does; frames are then decoded with it whenever the server
     /// speaks NatNet 3 or later. Unicast only: a multicast stream has one
-    /// version for every client. Unset sends the plain hello.
+    /// version for every client. Unset sends the plain hello. Tested against
+    /// the simulated server only, not yet against live Motive.
     pub request_bitstream: Option<String>,
     /// Camera clock frequency for passive mode, Hz.
     pub clock_frequency: u64,
