@@ -49,7 +49,9 @@ pub enum SourceEvent {
     },
     /// A NAT_MESSAGESTRING text from the server.
     ServerMessage(String),
-    /// A datagram that failed to decode.
+    /// A datagram that failed to decode, or another error the source hit: a
+    /// capture it cannot read, a decoder it cannot set up, or a multicast
+    /// port it cannot bind or join.
     DecodeError(String),
     /// A connection state change.
     Connection(ConnectionState),

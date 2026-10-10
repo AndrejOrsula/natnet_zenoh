@@ -209,12 +209,18 @@ fn route_to(server: Ipv4Addr) -> Option<Ipv4Addr> {
     }
 }
 
-/// Binds a multicast receiver that coexists with other NatNet clients on the
-/// same host (`SO_REUSEADDR`). On Linux it binds the group address, so
-/// datagrams for other groups on the same port stay out.
+/// Binds a multicast receiver with `SO_REUSEADDR`. It shares the port only
+/// with sockets that also set `SO_REUSEADDR`, such as another bridge. A
+/// socket bound to the port without it, such as one from std's
+/// [`UdpSocket::bind`] (which `natnet`'s `DataClient::bind_multicast`
+/// uses), makes whichever bind comes second fail with
+/// [`io::ErrorKind::AddrInUse`]; seen on Linux 6.8 at port 1511 on
+/// 2026-10-10. On Linux it binds the group address, so datagrams for other
+/// groups on the same port stay out.
 ///
 /// # Errors
-/// OS errors from creating, binding or joining.
+/// OS errors from creating, binding or joining. A failed bind or join
+/// names its step and address, and keeps the OS error's kind.
 pub fn multicast_socket(
     interface: Ipv4Addr,
     group: Ipv4Addr,
@@ -886,7 +892,13 @@ impl<'a> Client<'a> {
                         true
                     }
                     Err(e) => {
-                        let msg = format!("cannot join multicast {group}:{port}: {e}");
+                        let hint = if e.kind() == io::ErrorKind::AddrInUse {
+                            " (another receiver on this host may hold the port without \
+                             SO_REUSEADDR)"
+                        } else {
+                            ""
+                        };
+                        let msg = format!("cannot receive multicast {group}:{port}: {e}{hint}");
                         warn!("{msg}");
                         self.shared.ctx.report(SourceEvent::DecodeError(msg));
                         // Retry on the next SERVERINFO or loop.

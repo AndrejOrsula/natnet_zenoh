@@ -11,7 +11,9 @@ pub struct StreamStats {
     pub frames: u64,
     /// Frames missing according to the frame-number sequence.
     pub dropped_frames: u64,
-    /// Datagrams that failed to decode.
+    /// Datagrams that failed to decode, and the source's other errors (see
+    /// [`SourceEvent::DecodeError`](crate::source::SourceEvent::DecodeError)),
+    /// such as a multicast port it cannot bind.
     pub decode_errors: u64,
     /// Frames whose frame number went far backwards (server restart,
     /// replay loop).
@@ -21,7 +23,12 @@ pub struct StreamStats {
     pub late_frames: u64,
     /// Frames that repeated the newest frame number (a paused server).
     pub duplicate_frames: u64,
-    /// Smoothed frame rate, Hz.
+    /// Smoothed frame rate, Hz: the inverse of an exponential moving
+    /// average of the intervals between frames, in which each new interval
+    /// weighs 0.05 and the first one starts the average. Averaging
+    /// intervals rather than their inverses keeps jittered arrivals, and
+    /// two frames arriving microseconds apart, from biasing the rate
+    /// upwards. Late frames and zero intervals leave it unchanged.
     pub frame_rate: f64,
     /// Last server-reported latency, seconds.
     pub server_latency: Option<f64>,
@@ -39,6 +46,9 @@ pub struct StreamStats {
     pub last_frame_number: Option<i32>,
     #[serde(skip)]
     last_frame_at: Option<Instant>,
+    /// Average interval behind `frame_rate`, seconds; 0 before the first.
+    #[serde(skip)]
+    mean_interval: f64,
     #[serde(skip)]
     late_run: u32,
 }
@@ -105,12 +115,12 @@ impl StreamStats {
         if let Some(prev) = self.last_frame_at {
             let dt = now.duration_since(prev).as_secs_f64();
             if dt > 0.0 {
-                let rate = 1.0 / dt;
-                self.frame_rate = if self.frame_rate == 0.0 {
-                    rate
+                self.mean_interval = if self.mean_interval == 0.0 {
+                    dt
                 } else {
-                    0.95 * self.frame_rate + 0.05 * rate
+                    0.95 * self.mean_interval + 0.05 * dt
                 };
+                self.frame_rate = 1.0 / self.mean_interval;
             }
         }
         self.last_frame_at = Some(now);
@@ -164,6 +174,49 @@ mod tests {
         assert!((s.frame_rate - 100.0).abs() < 1e-6);
         assert_eq!(s.frames, 6);
         assert_eq!(s.new_frames(), 4);
+    }
+
+    /// Records frames numbered from 1 at `t0` plus each offset, in
+    /// milliseconds, and returns the rate after each one.
+    fn rates(offsets_ms: &[f64]) -> Vec<f64> {
+        let mut s = StreamStats::default();
+        let t0 = Instant::now();
+        (1..)
+            .zip(offsets_ms)
+            .map(|(n, &ms)| {
+                s.record_frame(n, t0 + Duration::from_secs_f64(ms / 1e3));
+                s.frame_rate
+            })
+            .collect()
+    }
+
+    #[test]
+    fn jittered_intervals_average_to_the_true_rate() {
+        // 5 ms and 15 ms in turn: 100 Hz. The average of 1/dt would settle
+        // near 133 Hz. Averaging the intervals with weight 0.05 settles
+        // into readings of 101.3 and 98.7 Hz, so allow 1.5 %.
+        let offsets: Vec<f64> = (0..400)
+            .scan(0.0, |t, i| {
+                *t += if i % 2 == 0 { 5.0 } else { 15.0 };
+                Some(*t)
+            })
+            .collect();
+        let rates = rates(&offsets);
+        for rate in &rates[200..] {
+            assert!((rate - 100.0).abs() < 1.5, "{rate} Hz");
+        }
+    }
+
+    #[test]
+    fn a_bunched_pair_does_not_spike_the_rate() {
+        // A steady 100 Hz stream in which one frame arrives 10 ms late,
+        // 4 µs before the next.
+        let mut offsets: Vec<f64> = (0..100).map(|i| f64::from(i) * 10.0).collect();
+        offsets.extend([1009.996, 1010.0]);
+        offsets.extend((102..200).map(|i| f64::from(i) * 10.0));
+        let rates = rates(&offsets);
+        let peak = rates.iter().copied().fold(0.0, f64::max);
+        assert!(peak < 110.0, "{peak} Hz");
     }
 
     #[test]

@@ -488,7 +488,9 @@ fn probe(args: &ProbeArgs) -> Result<(), String> {
     let mut info_json = serde_json::Value::Null;
     let mut messages = Vec::new();
     let mut errors = Vec::new();
+    let mut source_error = None;
     let mut first_frame: Option<Instant> = None;
+    let mut last_frame: Option<Instant> = None;
     let duration = args.duration.max(Duration::from_millis(100));
     let deadline = Instant::now() + duration + Duration::from_secs(2);
     let mut last_snapshot = None;
@@ -512,22 +514,30 @@ fn probe(args: &ProbeArgs) -> Result<(), String> {
                 received_mono,
             }) => {
                 first_frame.get_or_insert(received_mono);
+                last_frame = Some(received_mono);
                 if let Some(snap) = processor.process(&frame, received, received_mono) {
                     last_snapshot = Some(snap);
                 }
             }
             Ok(SourceEvent::ServerMessage(m)) => messages.push(m),
-            Ok(SourceEvent::DecodeError(e)) => errors.push(e),
+            Ok(SourceEvent::DecodeError(e)) => {
+                source_error = Some(e.clone());
+                errors.push(e);
+            }
             Ok(SourceEvent::Connection(_)) | Err(_) => {}
         }
     }
-    let elapsed = first_frame.map_or(0.0, |t| t.elapsed().as_secs_f64());
+    let span = first_frame
+        .zip(last_frame)
+        .map_or(Duration::ZERO, |(first, last)| {
+            last.saturating_duration_since(first)
+        });
     let stats = &processor.stats;
     let report = serde_json::json!({
         "server": info_json,
         "model": processor.model(),
         "frames": stats.frames,
-        "frame_rate": if elapsed > 0.0 { stats.frames as f64 / elapsed } else { 0.0 },
+        "frame_rate": arrival_rate(stats.frames, span),
         "dropped_frames": stats.dropped_frames,
         "late_frames": stats.late_frames,
         "duplicate_frames": stats.duplicate_frames,
@@ -597,9 +607,33 @@ fn probe(args: &ProbeArgs) -> Result<(), String> {
         emit(&(lines.join("\n") + "\n"))?;
     }
     if stats.frames == 0 {
-        return Err("no frames received".into());
+        return Err(no_frames(source_error.as_deref()));
     }
     Ok(())
+}
+
+/// Frames per second over the span they arrived in: `frames - 1` intervals
+/// between the first frame and the last. Zero below two frames or for a
+/// zero span.
+fn arrival_rate(frames: u64, span: Duration) -> f64 {
+    let secs = span.as_secs_f64();
+    if frames < 2 || secs <= 0.0 {
+        return 0.0;
+    }
+    (frames - 1) as f64 / secs
+}
+
+/// Why `probe` or `record` failed when no frame arrived: the last error the
+/// source reported, such as a multicast port it could not bind, or else
+/// where to look.
+fn no_frames(source_error: Option<&str>) -> String {
+    match source_error {
+        Some(e) => format!("no frames received; the source reported: {e}"),
+        None => {
+            "no frames received; check that Motive streams to this host (--server, --interface)"
+                .to_owned()
+        }
+    }
 }
 
 /// Datagrams `record` holds in memory while the disk catches up.
@@ -691,6 +725,7 @@ fn record(args: &RecordArgs) -> Result<(), String> {
     let stop = stop_flag();
     info!("recording to {} (Ctrl-C to stop)", args.output.display());
     let mut last_report = Instant::now();
+    let mut source_error = None;
     while !stop.load(Ordering::Relaxed) {
         if args.duration.is_some_and(|d| start.elapsed() >= d) {
             break;
@@ -700,6 +735,7 @@ fn record(args: &RecordArgs) -> Result<(), String> {
             match e {
                 SourceEvent::Connection(ConnectionState::Lost) => warn!("stream lost"),
                 SourceEvent::ServerInfo(i) => info!("server: {}", server_info_json(&i)),
+                SourceEvent::DecodeError(e) => source_error = Some(e),
                 _ => {}
             }
         }
@@ -741,7 +777,7 @@ fn record(args: &RecordArgs) -> Result<(), String> {
         warn!("{dropped} datagrams were not recorded: the disk did not keep up");
     }
     if w.frames == 0 {
-        return Err("no frames received".into());
+        return Err(no_frames(source_error.as_deref()));
     }
     Ok(())
 }
