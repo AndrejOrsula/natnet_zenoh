@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use natnet_zenoh::bridge::Bridge;
 use natnet_zenoh::config::{Config, SourceKind};
+use natnet_zenoh::ros::msgs::diagnostic_msgs::DiagnosticArray;
 use natnet_zenoh::ros::msgs::geometry_msgs::PoseStamped;
 use natnet_zenoh::ros::msgs::rcl_interfaces::{
     GetParameters, GetParametersRequest, Parameter, ParameterValue, SetParameters,
@@ -319,6 +320,92 @@ fn replay_runs_to_the_end_without_ros() {
         ),
         (0, 0, 0)
     );
+}
+
+#[test]
+fn replay_without_exit_on_end_keeps_services_alive_until_stopped() {
+    let (a, b) = pair(23);
+    let scene = Scene::new(SyntheticConfig::default()).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "natnet_zenoh_bridge_keepalive_{}.natnet",
+        std::process::id()
+    ));
+    let mut w = CaptureWriter::create(&path, Format::NatNet).unwrap();
+    w.write(&Record {
+        time_ns: 0,
+        source: None,
+        bytes: scene.model_def().to_datagram(scene.version()).unwrap(),
+    })
+    .unwrap();
+    w.write(&Record {
+        time_ns: 1,
+        source: None,
+        bytes: scene.frame_datagram(0).unwrap(),
+    })
+    .unwrap();
+    drop(w);
+
+    let node = b.create_node("replay_consumer", "/").unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _diagnostics = node
+        .create_subscription::<DiagnosticArray, _>(
+            "/diagnostics",
+            QosProfile::default(),
+            move |m, _| {
+                let _ = tx.send(m);
+            },
+        )
+        .unwrap();
+    let stats = node.create_client::<Trigger>("natnet/get_stats").unwrap();
+
+    let mut cfg = Config::default();
+    cfg.source.kind = SourceKind::Replay;
+    cfg.source.replay.path = path.clone();
+    cfg.source.replay.rate = 0.0;
+    cfg.source.replay.protocol_version = Some("4.1".into());
+    cfg.source.exit_on_end = false;
+    cfg.diagnostics.period_secs = 0.05;
+    let mut bridge = Bridge::new(cfg, Some(a), None).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let runner = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || bridge.run(&stop))
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let finished_diagnostic = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break false;
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(message)
+                if message
+                    .status
+                    .iter()
+                    .any(|status| status.message == "replay finished") =>
+            {
+                break true;
+            }
+            Ok(_) => {}
+            Err(_) => break false,
+        }
+    };
+    let service_alive = finished_diagnostic
+        && stats
+            .call(&TriggerRequest::default(), Duration::from_secs(2))
+            .is_ok_and(|reply| reply.success);
+
+    stop.store(true, Ordering::Relaxed);
+    let summary = runner.join().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(finished_diagnostic, "no finished diagnostic");
+    assert!(
+        service_alive,
+        "get_stats service unavailable after replay EOF"
+    );
+    assert!(summary.finished, "{summary:?}");
+    assert_eq!(summary.frames, 1, "{summary:?}");
 }
 
 #[test]

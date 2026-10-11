@@ -360,8 +360,15 @@ impl Bridge {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     if !self.finished {
                         warn!("the source stopped");
+                        break;
                     }
-                    break;
+                    if self.cfg.source.exit_on_end {
+                        break;
+                    }
+                    // EOF closes the source channel. Keep servicing bridge
+                    // outputs until stop is requested, without polling the
+                    // closed channel in a tight loop.
+                    std::thread::sleep(wait.max(Duration::from_millis(1)));
                 }
             }
             while let Some(cfg) = self
