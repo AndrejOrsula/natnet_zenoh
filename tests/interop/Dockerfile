@@ -1,9 +1,7 @@
-# Stock ROS 2 with rmw_zenoh_cpp from the ROS apt repository, for
-# `tests/interop/ros2.sh`. The packages are deliberately unpinned: the check
-# runs against the current apt releases, as `ros.rmw_zenoh` promises.
+# Stock ROS 2 and rmw_zenoh_cpp for `tests/interop/ros2.sh`. Unpinned apt
+# packages check the current releases supported by `ros.rmw_zenoh`.
 #
-# The router and every session use ZENOH_PORT instead of 7447, so the check
-# never joins another router on the host.
+# Router and session configs use ZENOH_PORT instead of 7447.
 ARG ROS_DISTRO=jazzy
 FROM ros:${ROS_DISTRO}-ros-base
 ARG ROS_DISTRO
