@@ -43,7 +43,7 @@ pub enum History {
     SystemDefault = 0,
     /// Keep the last `depth` samples.
     KeepLast = 1,
-    /// Keep every sample.
+    /// Keep every sample subject to the transient-local cache depth limit.
     KeepAll = 2,
 }
 
@@ -83,7 +83,9 @@ impl RmwDuration {
 pub struct QosProfile {
     /// History policy.
     pub history: History,
-    /// History depth, for [`History::KeepLast`].
+    /// History depth. Transient-local publishers retain at most this many
+    /// samples for either history policy; zero adapts to the middleware
+    /// default before publisher creation.
     pub depth: usize,
     /// Reliability policy.
     pub reliability: Reliability,

@@ -16,6 +16,7 @@ use natnet_zenoh::ros::liveliness::EntityKind;
 use natnet_zenoh::ros::msgs::rcl_interfaces::Log;
 use natnet_zenoh::ros::msgs::std_msgs;
 use natnet_zenoh::ros::msgs::std_srvs::{Trigger, TriggerRequest, TriggerResponse};
+use natnet_zenoh::ros::qos::History;
 use natnet_zenoh::ros::rosout::{RosoutLayer, rosout_qos};
 use natnet_zenoh::ros::{
     Context, ContextOptions, Gid, Message, QosProfile, RosError, SessionConfig,
@@ -139,15 +140,30 @@ fn transient_local_late_joiner() {
         (15, RmwZenohCompat::Jazzy022),
         (16, RmwZenohCompat::Jazzy020),
     ] {
-        late_joiner(domain, compat);
+        late_joiner(domain, compat, History::KeepLast);
     }
 }
 
-fn late_joiner(domain: u32, compat: RmwZenohCompat) {
+#[test]
+fn transient_local_keep_all_late_joiner_is_bounded() {
+    // Exercise both the advanced-pub/sub cache and the Jazzy 0.2.0 query cache.
+    for (domain, compat) in [
+        (20, RmwZenohCompat::Current),
+        (21, RmwZenohCompat::Jazzy020),
+    ] {
+        late_joiner(domain, compat, History::KeepAll);
+    }
+}
+
+fn late_joiner(domain: u32, compat: RmwZenohCompat, history: History) {
     let (a, b) = pair_with(domain, compat);
+    let publisher_qos = QosProfile {
+        history,
+        ..QosProfile::transient_local(2)
+    };
     let pub_node = a.create_node("latched", "/").unwrap();
     let publisher = pub_node
-        .create_publisher::<std_msgs::String>("/latched", QosProfile::transient_local(2))
+        .create_publisher::<std_msgs::String>("/latched", publisher_qos)
         .unwrap();
     for s in ["one", "two", "three"] {
         publisher.publish(&msg(s)).unwrap();
@@ -156,11 +172,18 @@ fn late_joiner(domain: u32, compat: RmwZenohCompat) {
 
     // The token encodes the QoS against the release's default durability,
     // and the other side reads it back as transient local.
-    let qos = match compat {
-        RmwZenohCompat::Current | RmwZenohCompat::Humble | RmwZenohCompat::Jazzy023 => {
-            ":1:,2:,:,:,,"
-        }
-        RmwZenohCompat::Jazzy022 | RmwZenohCompat::Jazzy020 => "::,2:,:,:,,",
+    let qos = match (compat, history) {
+        (
+            RmwZenohCompat::Current | RmwZenohCompat::Humble | RmwZenohCompat::Jazzy023,
+            History::KeepLast,
+        ) => ":1:,2:,:,:,,",
+        (RmwZenohCompat::Jazzy022 | RmwZenohCompat::Jazzy020, History::KeepLast) => "::,2:,:,:,,",
+        (
+            RmwZenohCompat::Current | RmwZenohCompat::Humble | RmwZenohCompat::Jazzy023,
+            History::KeepAll,
+        ) => ":1:2,2:,:,:,,",
+        (RmwZenohCompat::Jazzy022 | RmwZenohCompat::Jazzy020, History::KeepAll) => "::2,2:,:,:,,",
+        (_, History::SystemDefault) => unreachable!(),
     };
     // Humble has no type hashes; the others carry RIHS01.
     let hash = if compat == RmwZenohCompat::Humble {
@@ -188,10 +211,7 @@ fn late_joiner(domain: u32, compat: RmwZenohCompat) {
         .iter()
         .find_map(|e| e.topic.as_ref().filter(|t| t.name == "/latched"))
         .unwrap();
-    assert_eq!(
-        latched.qos,
-        QosProfile::transient_local(2).adapted(compat.qos_defaults())
-    );
+    assert_eq!(latched.qos, publisher_qos.adapted(compat.qos_defaults()));
 
     let sub_node = b.create_node("late", "/").unwrap();
     let (tx, rx) = mpsc::channel();
