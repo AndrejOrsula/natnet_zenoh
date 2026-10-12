@@ -403,8 +403,10 @@ impl Scene {
                 timecode_subframe: 0,
                 timestamp: t,
                 camera_mid_exposure: mid,
-                camera_data_received: mid + (0.002 * freq) as u64,
-                transmit: mid + (0.004 * freq) as u64,
+                // Keep timing ordered when an extreme configured clock
+                // exhausts the NatNet u64 counter.
+                camera_data_received: mid.saturating_add((0.002 * freq) as u64),
+                transmit: mid.saturating_add((0.004 * freq) as u64),
                 precision_timestamp_secs: 0,
                 precision_timestamp_fractional_secs: 0,
             },
@@ -634,6 +636,45 @@ mod tests {
             assert_eq!(model.force_plates.len(), 1);
             assert_eq!(model.devices.len(), 1);
         }
+    }
+
+    #[test]
+    fn extreme_clock_frequency_saturates_timing_offsets() {
+        let scene = Scene::new(SyntheticConfig {
+            clock_frequency: u64::MAX,
+            ..SyntheticConfig::default()
+        })
+        .unwrap();
+
+        for frame_number in [0, 120, i32::MAX, i32::MIN] {
+            let timing = scene.frame(frame_number).timing;
+            assert!(
+                timing.camera_mid_exposure <= timing.camera_data_received,
+                "frame {frame_number}: {timing:?}"
+            );
+            assert!(
+                timing.camera_data_received <= timing.transmit,
+                "frame {frame_number}: {timing:?}"
+            );
+        }
+        let saturated = scene.frame(i32::MAX).timing;
+        assert_eq!(saturated.camera_mid_exposure, u64::MAX);
+        assert_eq!(saturated.camera_data_received, u64::MAX);
+        assert_eq!(saturated.transmit, u64::MAX);
+    }
+
+    #[test]
+    fn normal_clock_timing_is_unchanged() {
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let timing = scene.frame(5).timing;
+        assert_eq!(
+            (
+                timing.camera_mid_exposure,
+                timing.camera_data_received,
+                timing.transmit
+            ),
+            (416_667, 436_667, 456_667)
+        );
     }
 
     #[test]
