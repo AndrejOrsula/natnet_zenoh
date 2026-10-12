@@ -60,9 +60,9 @@ pub enum Transport {
 pub struct LiveConfig {
     /// Motive's address; empty to discover it from the multicast stream.
     pub server: Option<Ipv4Addr>,
-    /// Local interface address used to join the group; unspecified picks
-    /// the interface that routes to `server` (or, without one, the
-    /// default route's).
+    /// Local IPv4 interface address; `0.0.0.0` automatically joins the group
+    /// on every eligible active IPv4 address, while a nonzero address selects
+    /// only that interface.
     pub interface: Ipv4Addr,
     /// Server command port.
     pub command_port: u16,
@@ -193,6 +193,89 @@ fn tune(socket: &Socket, receive_buffer: usize) {
     }
 }
 
+/// Filters and orders candidate addresses independently of host enumeration
+/// order so automatic membership attempts are predictable.
+#[cfg(any(unix, windows, test))]
+fn eligible_ipv4_addresses(
+    interfaces: impl IntoIterator<Item = (Ipv4Addr, bool)>,
+) -> Vec<Ipv4Addr> {
+    let mut addresses: Vec<_> = interfaces
+        .into_iter()
+        .filter_map(|(ip, up)| {
+            (up && !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast()).then_some(ip)
+        })
+        .collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    addresses
+}
+
+fn select_interfaces(
+    interface: Ipv4Addr,
+    enumerate: impl FnOnce() -> io::Result<Vec<Ipv4Addr>>,
+) -> io::Result<(Vec<Ipv4Addr>, bool)> {
+    if !interface.is_unspecified() {
+        return Ok((vec![interface], false));
+    }
+    let interfaces = enumerate()?;
+    Ok((interfaces, true))
+}
+
+fn join_candidates<E>(
+    interfaces: &[Ipv4Addr],
+    mut join: impl FnMut(Ipv4Addr) -> Result<(), E>,
+) -> (Vec<Ipv4Addr>, Vec<(Ipv4Addr, E)>) {
+    let mut joined = Vec::new();
+    let mut failures = Vec::new();
+    for interface in interfaces {
+        match join(*interface) {
+            Ok(()) => joined.push(*interface),
+            Err(e) => failures.push((*interface, e)),
+        }
+    }
+    (joined, failures)
+}
+
+#[cfg(any(unix, windows))]
+fn automatic_interfaces() -> io::Result<Vec<Ipv4Addr>> {
+    if_addrs::get_if_addrs().map(|interfaces| {
+        eligible_ipv4_addresses(interfaces.into_iter().filter_map(|interface| {
+            let is_up = interface.is_oper_up();
+            match interface.addr {
+                if_addrs::IfAddr::V4(addr) => Some((addr.ip, is_up)),
+                if_addrs::IfAddr::V6(_) => None,
+            }
+        }))
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn automatic_interfaces() -> io::Result<Vec<Ipv4Addr>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "automatic IPv4 interface enumeration is unsupported on this platform",
+    ))
+}
+
+fn local_multicast_sender(
+    automatic: bool,
+    server_route: Option<Ipv4Addr>,
+    group_route: Option<Ipv4Addr>,
+) -> Option<Ipv4Addr> {
+    (automatic && server_route.is_some_and(|ip| ip.is_loopback()))
+        .then_some(group_route)
+        .flatten()
+}
+
+fn accepts_multicast_source(
+    filter: bool,
+    server: Option<Ipv4Addr>,
+    source: Ipv4Addr,
+    local_sender: Option<Ipv4Addr>,
+) -> bool {
+    !filter || server.is_none_or(|server| server == source || local_sender == Some(source))
+}
+
 /// Longest handshake retry interval, unless `connect_interval_ms` is longer.
 const MAX_CONNECT_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -209,8 +292,9 @@ fn route_to(server: Ipv4Addr) -> Option<Ipv4Addr> {
     }
 }
 
-/// Binds a multicast receiver with `SO_REUSEADDR`. It shares the port only
-/// with sockets that also set `SO_REUSEADDR`, such as another bridge. A
+/// Binds a multicast receiver with `SO_REUSEADDR`, plus `SO_REUSEPORT` on
+/// macOS and the BSDs. It shares the port only with sockets that set the
+/// same options, such as another bridge. A
 /// socket bound to the port without it, such as one from std's
 /// [`UdpSocket::bind`] (which `natnet`'s `DataClient::bind_multicast`
 /// uses), makes whichever bind comes second fail with
@@ -227,17 +311,77 @@ pub fn multicast_socket(
     port: u16,
     receive_buffer: usize,
 ) -> io::Result<UdpSocket> {
+    let socket = multicast_receiver(group, port, receive_buffer)?;
+    socket
+        .join_multicast_v4(&group, &interface)
+        .map_err(|e| step_error(&format!("joining {group} on {interface}"), &e))?;
+    Ok(socket.into())
+}
+
+fn multicast_receiver(group: Ipv4Addr, port: u16, receive_buffer: usize) -> io::Result<Socket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
+    // BSD kernels, macOS included, share a wildcard-bound UDP port only
+    // between sockets that all set SO_REUSEPORT as well.
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    socket.set_reuse_port(true)?;
     tune(&socket, receive_buffer);
     let bind = if cfg!(target_os = "linux") {
         group
     } else {
         Ipv4Addr::UNSPECIFIED
     };
-    socket.bind(&SocketAddrV4::new(bind, port).into())?;
-    socket.join_multicast_v4(&group, &interface)?;
-    Ok(socket.into())
+    socket
+        .bind(&SocketAddrV4::new(bind, port).into())
+        .map_err(|e| step_error(&format!("binding {bind}:{port}"), &e))?;
+    Ok(socket)
+}
+
+fn multicast_socket_automatic(
+    interfaces: &[Ipv4Addr],
+    group: Ipv4Addr,
+    port: u16,
+    receive_buffer: usize,
+) -> io::Result<(UdpSocket, Vec<Ipv4Addr>)> {
+    if interfaces.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            "automatic multicast interface selection found no eligible active IPv4 addresses; set source.live.interface or --interface",
+        ));
+    }
+    let socket = multicast_receiver(group, port, receive_buffer)?;
+    let (joined, failures) = join_candidates(interfaces, |interface| {
+        socket.join_multicast_v4(&group, &interface)
+    });
+    for (interface, error) in &failures {
+        warn!("cannot join multicast {group} on {interface}: {error}");
+    }
+    if joined.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            format!(
+                "automatic multicast join failed for {group}:{port} on all {} eligible interfaces ({}); set source.live.interface or --interface",
+                interfaces.len(),
+                failures
+                    .iter()
+                    .map(|(interface, error)| format!("{interface}: {error}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        ));
+    }
+    Ok((socket.into(), joined))
+}
+
+/// `e` with the step that failed in front, keeping its kind.
+fn step_error(step: &str, e: &io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("{step}: {e}"))
 }
 
 fn command_socket(interface: Ipv4Addr, receive_buffer: usize) -> io::Result<UdpSocket> {
@@ -325,22 +469,27 @@ impl DataThread {
     fn spawn(
         shared: &Arc<Shared>,
         cfg: &LiveConfig,
-        (interface, also): (Ipv4Addr, Option<Ipv4Addr>),
+        interfaces: &[Ipv4Addr],
+        automatic: bool,
         group: Ipv4Addr,
         port: u16,
     ) -> io::Result<Self> {
-        let socket = multicast_socket(interface, group, port, cfg.receive_buffer)?;
+        let (socket, joined) = if automatic {
+            multicast_socket_automatic(interfaces, group, port, cfg.receive_buffer)?
+        } else {
+            (
+                multicast_socket(cfg.interface, group, port, cfg.receive_buffer)?,
+                vec![cfg.interface],
+            )
+        };
         socket.set_read_timeout(Some(Duration::from_millis(100)))?;
-        info!("joined multicast {group}:{port} on {interface}");
-        if let Some(extra) = also {
-            match socket.join_multicast_v4(&group, &extra) {
-                Ok(()) => info!("joined multicast {group}:{port} on {extra} too"),
-                Err(e) => debug!("cannot also join {group} on {extra}: {e}"),
-            }
+        for interface in &joined {
+            info!("joined multicast {group}:{port} on {interface}");
         }
         // A server on this host sends its multicast from the address the
         // kernel picks for the group, which the source filter accepts too.
-        let local_sender = also.and_then(|_| route_to(group));
+        let local_sender =
+            local_multicast_sender(automatic, cfg.server.and_then(route_to), route_to(group));
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
             let shared = Arc::clone(shared);
@@ -372,10 +521,7 @@ impl DataThread {
                                     }
                                     server.or(*d)
                                 };
-                                if filter
-                                    && source.is_some_and(|s| s != ip)
-                                    && local_sender != Some(ip)
-                                {
+                                if !accepts_multicast_source(filter, source, ip, local_sender) {
                                     continue;
                                 }
                                 shared.handle(&buf[..n], from, received, mono);
@@ -517,11 +663,6 @@ impl<'a> Client<'a> {
     }
 
     fn run(mut self, commands: &Receiver<SourceCommand>) {
-        if self.cfg.interface.is_unspecified() && self.cfg.server.is_none() {
-            info!(
-                "joining multicast on the default route's interface; set source.live.interface to the Motive network's address if no frames arrive"
-            );
-        }
         if self.listens_first() {
             // Listen first: passive, discovering the server, or ready for
             // multicast frames before the handshake completes.
@@ -598,19 +739,14 @@ impl<'a> Client<'a> {
         }
     }
 
-    /// The interface to join multicast groups on, and a second one to join
-    /// as well. A server on this host routes through loopback, yet it may
-    /// send its multicast on the default interface (where the kernel loops
-    /// it back), so both are joined then.
-    fn interfaces(&self) -> (Ipv4Addr, Option<Ipv4Addr>) {
-        if !self.cfg.interface.is_unspecified() {
-            return (self.cfg.interface, None);
-        }
-        match self.cfg.server.and_then(route_to) {
-            Some(ip) if ip.is_loopback() => (ip, Some(Ipv4Addr::UNSPECIFIED)),
-            Some(ip) => (ip, None),
-            None => (Ipv4Addr::UNSPECIFIED, None),
-        }
+    /// Interfaces to join, and whether they were selected automatically.
+    fn interfaces(&self) -> io::Result<(Vec<Ipv4Addr>, bool)> {
+        select_interfaces(self.cfg.interface, automatic_interfaces).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot enumerate active IPv4 multicast interfaces: {e}; set source.live.interface or --interface"),
+            )
+        })
     }
 
     /// Requests the model periodically while streaming: Motive does not set
@@ -667,13 +803,18 @@ impl<'a> Client<'a> {
     }
 
     fn open_command(&mut self, server: Ipv4Addr) {
-        match command_socket(self.cfg.interface, self.cfg.receive_buffer).and_then(|s| {
+        let interface = if self.cfg.interface.is_unspecified() {
+            route_to(server).unwrap_or(Ipv4Addr::UNSPECIFIED)
+        } else {
+            self.cfg.interface
+        };
+        match command_socket(interface, self.cfg.receive_buffer).and_then(|s| {
             s.set_read_timeout(Some(Duration::from_millis(50)))?;
             Ok(s)
         }) {
             Ok(socket) => {
                 let addr = SocketAddrV4::new(server, self.cfg.command_port);
-                info!("NatNet command channel to {addr}");
+                info!("NatNet command channel to {addr} from {interface}");
                 self.command = Some((socket, addr));
                 self.started = Instant::now();
             }
@@ -885,7 +1026,10 @@ impl<'a> Client<'a> {
                 true
             }
             DataPath::Multicast { group, port } => {
-                match DataThread::spawn(&self.shared, self.cfg, self.interfaces(), group, port) {
+                let result = self.interfaces().and_then(|(interfaces, automatic)| {
+                    DataThread::spawn(&self.shared, self.cfg, &interfaces, automatic, group, port)
+                });
+                match result {
                     Ok(t) => {
                         debug_assert_eq!(t.path, path);
                         self.data = Some(t);
@@ -894,7 +1038,7 @@ impl<'a> Client<'a> {
                     Err(e) => {
                         let hint = if e.kind() == io::ErrorKind::AddrInUse {
                             " (another receiver on this host may hold the port without \
-                             SO_REUSEADDR)"
+                             SO_REUSEADDR, or on macOS and the BSDs SO_REUSEPORT)"
                         } else {
                             ""
                         };
@@ -965,5 +1109,126 @@ impl<'a> Client<'a> {
             debug!("still waiting for a multicast datagram to discover the server");
             self.started = Instant::now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eligible_interfaces_are_sorted_deduplicated_and_keep_loopback_and_link_local() {
+        let candidates = eligible_ipv4_addresses([
+            (Ipv4Addr::new(192, 0, 2, 4), true),
+            (Ipv4Addr::new(169, 254, 2, 3), true),
+            (Ipv4Addr::LOCALHOST, true),
+            (Ipv4Addr::new(192, 0, 2, 4), true),
+            (Ipv4Addr::new(203, 0, 113, 8), false),
+            (Ipv4Addr::UNSPECIFIED, true),
+            (Ipv4Addr::new(224, 0, 0, 1), true),
+        ]);
+        assert_eq!(
+            candidates,
+            [
+                Ipv4Addr::LOCALHOST,
+                Ipv4Addr::new(169, 254, 2, 3),
+                Ipv4Addr::new(192, 0, 2, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_interface_skips_automatic_enumeration() {
+        let explicit = Ipv4Addr::new(192, 0, 2, 9);
+        let (interfaces, automatic) =
+            select_interfaces(explicit, || panic!("explicit interface must not enumerate"))
+                .unwrap();
+        assert_eq!(interfaces, [explicit]);
+        assert!(!automatic);
+    }
+
+    #[test]
+    fn source_filter_keeps_local_route_exception_only_for_local_configured_server() {
+        let group_sender = Ipv4Addr::new(192, 0, 2, 10);
+        let remote_route = Ipv4Addr::new(198, 51, 100, 20);
+        let remote_exception = local_multicast_sender(true, Some(remote_route), Some(group_sender));
+        assert_eq!(remote_exception, None);
+        assert!(!accepts_multicast_source(
+            true,
+            Some(remote_route),
+            group_sender,
+            remote_exception
+        ));
+
+        let local_exception =
+            local_multicast_sender(true, Some(Ipv4Addr::LOCALHOST), Some(group_sender));
+        assert_eq!(local_exception, Some(group_sender));
+        assert!(accepts_multicast_source(
+            true,
+            Some(Ipv4Addr::LOCALHOST),
+            group_sender,
+            local_exception
+        ));
+        assert!(!accepts_multicast_source(
+            true,
+            Some(Ipv4Addr::LOCALHOST),
+            group_sender,
+            None
+        ));
+    }
+
+    #[test]
+    fn multicast_membership_continues_after_failures_and_reports_all_failed() {
+        let candidates = [Ipv4Addr::LOCALHOST, Ipv4Addr::new(192, 0, 2, 3)];
+        let (joined, failed) = join_candidates(&candidates, |ip| {
+            if ip.is_loopback() {
+                Err("simulated join failure")
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(joined, [Ipv4Addr::new(192, 0, 2, 3)]);
+        assert_eq!(failed, [(Ipv4Addr::LOCALHOST, "simulated join failure")]);
+
+        let (joined, failed) = join_candidates(&candidates, |_| Err("join failed"));
+        assert_eq!(joined, Vec::<Ipv4Addr>::new());
+        assert_eq!(failed.len(), candidates.len());
+        let (joined, failed): (Vec<Ipv4Addr>, Vec<(Ipv4Addr, &str)>) =
+            join_candidates(&[], |_| Err("unreachable"));
+        assert!(joined.is_empty() && failed.is_empty());
+    }
+
+    #[test]
+    fn automatic_socket_reports_empty_candidates() {
+        let error =
+            multicast_socket_automatic(&[], Ipv4Addr::new(239, 255, 42, 99), 0, 0).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no eligible active IPv4 addresses")
+        );
+    }
+
+    #[test]
+    fn route_selected_command_binding_uses_server_route() {
+        let route = route_to(Ipv4Addr::LOCALHOST).unwrap();
+        let socket = command_socket(route, 0).unwrap();
+        assert_eq!(socket.local_addr().unwrap().ip(), IpAddr::V4(route));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_port_held_without_reuse_fails_at_the_bind() {
+        // The holder is bound but never joins, and nothing is sent.
+        let group = Ipv4Addr::new(239, 255, 42, 99);
+        let holder = UdpSocket::bind((group, 0)).unwrap();
+        let port = holder.local_addr().unwrap().port();
+        let e = multicast_socket(Ipv4Addr::LOCALHOST, group, port, 0).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AddrInUse);
+        assert!(
+            e.to_string()
+                .starts_with(&format!("binding {group}:{port}: ")),
+            "{e}"
+        );
     }
 }

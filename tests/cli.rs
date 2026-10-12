@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use natnet_zenoh::source::capture::{CaptureWriter, Format, Record};
+use natnet_zenoh::source::capture::{CaptureReader, CaptureWriter, Format, Record};
+use natnet_zenoh::source::server::{ServerConfig, SimServer};
 use natnet_zenoh::source::synthetic::{Scene, SyntheticConfig};
 
 fn bin() -> Command {
@@ -233,6 +234,78 @@ fn probe_and_record_against_the_simulated_server() {
     let out = run(bin().args(["probe", "-t", "0.2"]).args(live));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn live_commands_discover_multicast_without_server_or_interface() {
+    let data = free_udp_port();
+    let group = std::net::Ipv4Addr::new(239, 255, 42, 196);
+    let server = SimServer::spawn(ServerConfig {
+        bind: std::net::Ipv4Addr::LOCALHOST,
+        command_port: 0,
+        data_port: data,
+        multicast: true,
+        multicast_group: group,
+        multicast_interface: std::net::Ipv4Addr::LOCALHOST,
+        scene: SyntheticConfig {
+            rate_hz: 100.0,
+            ..SyntheticConfig::default()
+        },
+        ..ServerConfig::default()
+    })
+    .unwrap();
+    let command = server.command_addr().port().to_string();
+    let data = data.to_string();
+    let group = group.to_string();
+    let source = [
+        "--command-port",
+        command.as_str(),
+        "--data-port",
+        data.as_str(),
+        "--multicast-group",
+        group.as_str(),
+    ];
+
+    let out = run(bin().args(["probe", "--json", "-t", "0.5"]).args(source));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["frames"].as_u64().is_some_and(|n| n > 0), "{report}");
+    assert_eq!(report["errors"], serde_json::json!([]), "{report}");
+
+    let out = run(bin()
+        .args(["run", "--no-ros", "--duration", "0.5"])
+        .args(source));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let run_log = stderr(&out);
+    let frames = run_log
+        .split("stopped: ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    assert!(frames > 0, "{run_log}");
+
+    let path = temp("auto-interface.natnet");
+    let _ = std::fs::remove_file(&path);
+    let out = run(bin()
+        .args(["record", "-t", "0.5", "-o"])
+        .arg(&path)
+        .args(source));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let records = CaptureReader::open(&path)
+        .unwrap()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    let frames = records
+        .iter()
+        .filter(|record| record.bytes.get(..2) == Some(&natnet::NAT_FRAMEOFDATA.to_le_bytes()[..]))
+        .count();
+    assert!(
+        frames > 0,
+        "recorded {} records without any frames",
+        records.len()
+    );
+    std::fs::remove_file(&path).unwrap();
 }
 
 #[test]

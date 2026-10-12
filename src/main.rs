@@ -90,10 +90,12 @@ struct LiveArgs {
     /// a non-empty NATNET_ZENOH_CONFIG environment variable.
     #[arg(long, short = 'c', help_heading = "Configuration")]
     config: Option<PathBuf>,
-    /// Motive's address (omit to discover it from the multicast stream).
+    /// Motive's address; omit to discover it from an active multicast stream
+    /// (unicast requires a known server).
     #[arg(long, short = 's')]
     server: Option<Ipv4Addr>,
-    /// Local interface address.
+    /// Local IPv4 address; 0.0.0.0 (the default) selects eligible interfaces,
+    /// while a nonzero address selects only that address.
     #[arg(long, short = 'i')]
     interface: Option<Ipv4Addr>,
     /// Frame transport.

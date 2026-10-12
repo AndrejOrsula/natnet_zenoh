@@ -355,8 +355,8 @@ fn live_multicast_with_server_and_passive() {
     let port = server.command_addr().port();
     let active = LiveConfig {
         server: Some(Ipv4Addr::LOCALHOST),
-        interface: Ipv4Addr::LOCALHOST,
         command_port: port,
+        filter_source: true,
         model_poll_secs: 1,
         ..LiveConfig::default()
     };
@@ -409,10 +409,10 @@ fn live_discovers_server_from_multicast() {
     })
     .unwrap();
     let cfg = LiveConfig {
-        interface: Ipv4Addr::LOCALHOST,
         command_port: server.command_addr().port(),
         data_port,
         multicast_group: group,
+        filter_source: true,
         ..LiveConfig::default()
     };
     let h = SourceHandle::spawn("discover", 1024, move |ctx, cmds| {
