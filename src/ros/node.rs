@@ -443,7 +443,7 @@ impl RawPublisher {
                         .collect();
                     for (payload, attachment) in samples {
                         if let Err(e) = query
-                            .reply(reply_key.clone(), payload)
+                            .reply(reply_key.as_str(), payload)
                             .attachment(attachment)
                             .wait()
                         {
@@ -933,7 +933,7 @@ impl<S: Service> ServiceServer<S> {
                 let reply_attachment =
                     Attachment::now(attachment.sequence_number, attachment.source_gid);
                 if let Err(e) = query
-                    .reply(reply_key.clone(), bytes)
+                    .reply(reply_key.as_str(), bytes)
                     .attachment(reply_attachment.encode_as(format))
                     .wait()
                 {

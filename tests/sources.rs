@@ -327,7 +327,7 @@ fn request_bitstream_needs_an_active_unicast_client() {
         (
             LiveConfig {
                 protocol_version: Some("4.1".into()),
-                ..base.clone()
+                ..base
             },
             "not both",
         ),

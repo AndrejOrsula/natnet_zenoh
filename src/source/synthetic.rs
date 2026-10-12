@@ -258,8 +258,9 @@ impl Scene {
                 plate_type: 1,
                 channel_data_type: 0,
                 channel_names: ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+                    .into_iter()
                     .map(String::from)
-                    .to_vec(),
+                    .collect(),
             }));
         }
         if self.cfg.device {

@@ -399,7 +399,7 @@ impl ParameterServer {
             },
         )?;
         let setter = {
-            let (state, events, fqn) = (Arc::clone(&state), Arc::clone(&events), fqn.clone());
+            let (state, events, fqn) = (Arc::clone(&state), Arc::clone(&events), fqn);
             move |request: &[Parameter]| apply(&state, on_set.as_ref(), &events, &fqn, request)
         };
         let setter = Arc::new(setter);

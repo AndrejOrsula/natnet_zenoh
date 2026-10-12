@@ -161,7 +161,7 @@ pub fn expand_topic_name(
     };
 
     let mut expanded = if name == "~" {
-        node_fqn.clone()
+        node_fqn
     } else if let Some(rest) = name.strip_prefix("~/") {
         format!("{node_fqn}/{rest}")
     } else if name.starts_with('~') {

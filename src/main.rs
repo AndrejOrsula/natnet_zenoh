@@ -728,7 +728,7 @@ fn record(args: &RecordArgs) -> Result<(), String> {
             }
         })
     };
-    let live = cfg.source.live.clone();
+    let live = cfg.source.live;
     let mut handle = SourceHandle::spawn("natnet-live", 4096, move |ctx, cmds| {
         live::run_with_tap(&live, ctx, &cmds, Some(tap));
     })
@@ -752,10 +752,13 @@ fn record(args: &RecordArgs) -> Result<(), String> {
         }
         if last_report.elapsed() >= Duration::from_secs(5) {
             last_report = Instant::now();
-            let w = writer.lock().unwrap_or_else(PoisonError::into_inner);
+            let (datagrams, frames, bytes) = {
+                let w = writer.lock().unwrap_or_else(PoisonError::into_inner);
+                (w.datagrams, w.frames, w.bytes)
+            };
             info!(
                 "{} datagrams ({} frames), {} bytes",
-                w.datagrams, w.frames, w.bytes
+                datagrams, frames, bytes
             );
         }
         let w = writer.lock().unwrap_or_else(PoisonError::into_inner);

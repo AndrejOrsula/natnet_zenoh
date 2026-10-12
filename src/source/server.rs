@@ -14,6 +14,7 @@
 //! hello decides, and a plain one restores the scene's version; a capture, a
 //! `model_file` and multicast are sent as they are.
 
+use std::borrow::Cow;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::path::PathBuf;
@@ -547,16 +548,17 @@ impl State {
                     .server_info(self.cfg.multicast, self.cfg.data_port, group)
                     .to_datagram()
                     .ok()
+                    .map(Cow::Owned)
             }
-            natnet::NAT_REQUEST_MODELDEF => self.model.clone(),
-            natnet::NAT_REQUEST_FRAMEOFDATA => self.latest.clone(),
+            natnet::NAT_REQUEST_MODELDEF => self.model.as_deref().map(Cow::Borrowed),
+            natnet::NAT_REQUEST_FRAMEOFDATA => self.latest.as_deref().map(Cow::Borrowed),
             natnet::NAT_REQUEST => {
                 let text = String::from_utf8_lossy(request.get(4..).unwrap_or_default());
                 debug!("request {:?} from {from}", text.trim_end_matches('\0'));
                 let mut r = natnet::NAT_RESPONSE.to_le_bytes().to_vec();
                 r.extend_from_slice(&4_u16.to_le_bytes());
                 r.extend_from_slice(&0_i32.to_le_bytes());
-                Some(r)
+                Some(Cow::Owned(r))
             }
             NAT_KEEPALIVE => {
                 if self.clients.iter().any(|(a, _)| *a == from) {
@@ -570,9 +572,134 @@ impl State {
             }
         };
         if let Some(reply) = reply
-            && let Err(e) = self.command.send_to(&reply, from)
+            && let Err(e) = self.command.send_to(reply.as_ref(), from)
         {
             debug!("reply to {from} failed: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn repeated_raw_latest_frame_requests_preserve_retained_bytes() {
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let command = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let command_addr = command.local_addr().unwrap();
+        let client = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let client_addr = client.local_addr().unwrap();
+        let expected = scene.frame_datagram(42).unwrap();
+        let pacer = Pacer::new(scene.config().rate_hz);
+        let mut state = State {
+            cfg: ServerConfig {
+                bind: Ipv4Addr::LOCALHOST,
+                multicast: false,
+                ..ServerConfig::default()
+            },
+            stream: scene.clone(),
+            scene,
+            restreamed: false,
+            command,
+            data: None,
+            clients: Vec::new(),
+            feed: Feed::Scene { pacer },
+            latest: Some(expected.clone()),
+            model: None,
+            frames: Arc::new(AtomicU64::new(0)),
+            send_failures: 0,
+        };
+        let request = [
+            natnet::NAT_REQUEST_FRAMEOFDATA.to_le_bytes(),
+            0_u16.to_le_bytes(),
+        ]
+        .concat();
+        let mut reply = vec![0_u8; 65_536];
+
+        for _ in 0..3 {
+            state.on_command(&request, client_addr);
+            let (len, from) = client.recv_from(&mut reply).unwrap();
+            assert_eq!(from, command_addr);
+            assert_eq!(&reply[..len], expected.as_slice());
+            assert_eq!(state.latest.as_deref(), Some(expected.as_slice()));
+        }
+    }
+
+    #[test]
+    fn looping_capture_feed_stops_at_corrupt_tail() {
+        let path = std::env::temp_dir().join(format!(
+            "natnet-zenoh-corrupt-server-{}-{}.natnet",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut writer = super::super::capture::CaptureWriter::create(
+            &path,
+            super::super::capture::Format::NatNet,
+        )
+        .unwrap();
+        writer
+            .write(&super::super::capture::Record {
+                time_ns: 0,
+                source: None,
+                bytes: [
+                    natnet::NAT_FRAMEOFDATA.to_le_bytes(),
+                    0_u16.to_le_bytes(),
+                    0_u16.to_le_bytes(),
+                ]
+                .concat(),
+            })
+            .unwrap();
+        drop(writer);
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&[1, 2, 3])
+            .unwrap();
+
+        let feed = Feed::capture(&path, true).unwrap();
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let command = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut state = State {
+            cfg: ServerConfig::default(),
+            stream: scene.clone(),
+            scene,
+            restreamed: false,
+            command,
+            data: None,
+            clients: Vec::new(),
+            feed,
+            latest: None,
+            model: None,
+            frames: Arc::new(AtomicU64::new(0)),
+            send_failures: 0,
+        };
+
+        let first = state.next_frame();
+        let second = state.next_frame();
+        let finished = matches!(&state.feed, Feed::Capture { finished: true, .. });
+        let first_is_frame = first
+            .and_then(|(_, frame)| frame)
+            .is_some_and(|frame| frame.starts_with(&natnet::NAT_FRAMEOFDATA.to_le_bytes()));
+        let cleanup = fs::remove_file(path);
+
+        assert!(
+            cleanup.is_ok(),
+            "capture fixture cleanup failed: {cleanup:?}"
+        );
+        assert!(first_is_frame, "first capture record was not served");
+        assert!(second.is_none(), "corrupt capture tail restarted the feed");
+        assert!(finished, "corrupt capture feed was not marked finished");
     }
 }

@@ -148,14 +148,14 @@ impl RosType for u8 {
 
 impl RosField for u8 {
     fn field_type() -> FieldType {
-        <u8 as RosType>::element_type()
+        <Self as RosType>::element_type()
     }
     fn register(_set: &mut TypeSet) {}
     fn write_field(&self, w: &mut CdrWriter) -> cdr::Result<()> {
         RosType::write(self, w)
     }
     fn read_field(r: &mut CdrReader<'_>) -> cdr::Result<Self> {
-        <u8 as RosType>::read(r)
+        <Self as RosType>::read(r)
     }
     fn default_value() -> Self {
         0
@@ -177,7 +177,7 @@ impl RosType for String {
 
 impl RosField for String {
     fn field_type() -> FieldType {
-        <String as RosType>::element_type()
+        <Self as RosType>::element_type()
     }
     fn register(_set: &mut TypeSet) {}
     fn write_field(&self, w: &mut CdrWriter) -> cdr::Result<()> {

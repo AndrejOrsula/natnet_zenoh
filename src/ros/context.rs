@@ -506,4 +506,50 @@ mod tests {
         };
         assert!(build_config(&bad).is_err());
     }
+
+    #[test]
+    fn entity_id_allocator_reports_exhaustion_without_wrapping() {
+        let next = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(allocate_entity_id(&next).unwrap(), u64::MAX - 1);
+        assert_eq!(
+            allocate_entity_id(&next).unwrap_err().to_string(),
+            "ROS entity id space exhausted"
+        );
+        assert_eq!(next.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn concurrent_entity_id_allocations_are_unique_and_contiguous() {
+        const THREADS: u64 = 8;
+        const ALLOCATIONS_PER_THREAD: u64 = 64;
+
+        let next = AtomicU64::new(0);
+        let barrier = std::sync::Barrier::new(THREADS as usize);
+        let mut ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        (0..ALLOCATIONS_PER_THREAD)
+                            .map(|_| allocate_entity_id(&next).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            (0..THREADS * ALLOCATIONS_PER_THREAD).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            next.load(Ordering::Relaxed),
+            THREADS * ALLOCATIONS_PER_THREAD
+        );
+    }
 }

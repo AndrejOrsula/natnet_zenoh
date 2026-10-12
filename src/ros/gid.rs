@@ -8,16 +8,11 @@ pub struct Gid(pub [u8; 16]);
 
 impl Gid {
     /// The GID `rmw_zenoh_cpp` derives from a liveliness key expression:
-    /// XXH3-128, low 64 bits then high 64 bits, each little-endian.
+    /// XXH3-128 serialized as a little-endian `u128` (low 64 bits then high 64 bits).
     #[must_use]
     pub fn from_liveliness_keyexpr(keyexpr: &str) -> Self {
         let h = xxhash_rust::xxh3::xxh3_128(keyexpr.as_bytes());
-        let low = (h as u64).to_le_bytes();
-        let high = ((h >> 64) as u64).to_le_bytes();
-        let mut out = [0_u8; 16];
-        out[..8].copy_from_slice(&low);
-        out[8..].copy_from_slice(&high);
-        Self(out)
+        Self(h.to_le_bytes())
     }
 }
 

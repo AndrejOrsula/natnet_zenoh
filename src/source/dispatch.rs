@@ -26,8 +26,8 @@ pub enum Policy {
 impl From<Policy> for ParsePolicy {
     fn from(p: Policy) -> Self {
         match p {
-            Policy::Strict => ParsePolicy::Strict,
-            Policy::Compatible => ParsePolicy::Compatible,
+            Policy::Strict => Self::Strict,
+            Policy::Compatible => Self::Compatible,
         }
     }
 }

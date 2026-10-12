@@ -73,21 +73,11 @@ fn pair_with(domain_id: u32, compat: RmwZenohCompat) -> (Context, Context) {
     .unwrap();
     // Wait for the link.
     let deadline = Instant::now() + Duration::from_secs(5);
-    while b.session().info().peers_zid().wait_list().is_empty() {
+    while b.session().info().peers_zid().wait().next().is_none() {
         assert!(Instant::now() < deadline, "peers did not connect");
         std::thread::sleep(Duration::from_millis(20));
     }
     (a, b)
-}
-
-trait WaitList {
-    fn wait_list(self) -> Vec<zenoh::session::ZenohId>;
-}
-
-impl<T: zenoh::Wait<To = I>, I: Iterator<Item = zenoh::session::ZenohId>> WaitList for T {
-    fn wait_list(self) -> Vec<zenoh::session::ZenohId> {
-        self.wait().collect()
-    }
 }
 
 fn msg(s: &str) -> std_msgs::String {

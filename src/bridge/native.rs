@@ -203,7 +203,7 @@ impl NativeOutputs {
                     .callback(move |q| {
                         let body = s.snapshot_json(name);
                         if let Err(e) = q
-                            .reply(reply_key.clone(), body)
+                            .reply(reply_key.as_str(), body)
                             .encoding(json_encoding())
                             .wait()
                         {
@@ -226,7 +226,7 @@ impl NativeOutputs {
                         .is_ok_and(|tx| tx.send(SourceCommand::RefreshModel).is_ok());
                     let body = if ok { "requested" } else { "source stopped" };
                     if let Err(e) = q
-                        .reply(reply_key.clone(), body)
+                        .reply(reply_key.as_str(), body)
                         .encoding(Encoding::TEXT_PLAIN.with_schema(FORMAT_SCHEMA))
                         .wait()
                     {
