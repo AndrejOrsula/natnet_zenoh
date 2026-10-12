@@ -25,7 +25,12 @@ use natnet_zenoh::source::server::{ServerConfig, SimServer};
 use natnet_zenoh::source::{ConnectionState, SourceEvent, SourceHandle};
 
 #[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(
+    version,
+    about = "Bridge NatNet motion capture to Zenoh and ROS 2.",
+    long_about = None,
+    after_help = "Quick check (synthetic data, no ROS or Zenoh router):\n  natnet_zenoh run --synthetic --no-ros --duration 2\nSuccess: a 'stopped:' summary with more than 0 frames."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -158,6 +163,9 @@ impl LiveArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    after_help = "Quick check (synthetic data, no ROS or Zenoh router):\n  natnet_zenoh run --synthetic --no-ros --duration 2\nSuccess: a 'stopped:' summary with more than 0 frames."
+)]
 struct RunArgs {
     #[command(flatten, next_help_heading = "Live NatNet source")]
     live: LiveArgs,
