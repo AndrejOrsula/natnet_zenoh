@@ -391,6 +391,9 @@ impl Bridge {
                 self.diagnostics();
             }
         }
+        // `Bridge` may outlive this run. Stop the producer while this run
+        // still owns the bridge so cancellation also ends its worker.
+        self.source.stop();
         self.processor.stats.decode_errors += self.source.take_dropped_reports();
         self.diagnostics();
         self.summary()
@@ -724,5 +727,43 @@ impl Bridge {
             }
         }
         ros.publish_diagnostics(status);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::config::SourceKind;
+
+    #[test]
+    fn retained_bridge_stops_its_source_before_run_returns() {
+        let mut cfg = Config::default();
+        cfg.source.kind = SourceKind::Synthetic;
+        cfg.ros.enabled = false;
+        let mut bridge = Bridge::new(cfg, None, None).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while bridge.source.dropped_frames() == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(bridge.source.is_running());
+        assert!(
+            bridge.source.dropped_frames() > 0,
+            "source queue did not fill"
+        );
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel = Arc::clone(&stop);
+        let caller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            cancel.store(true, Ordering::Relaxed);
+        });
+        let summary = bridge.run(&stop);
+        caller.join().unwrap();
+
+        assert!(
+            bridge.source.is_stopped(),
+            "Bridge::run returned before stopping retained source"
+        );
+        assert!(summary.queue_drops > 0);
     }
 }

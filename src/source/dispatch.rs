@@ -61,6 +61,7 @@ pub struct Dispatcher {
     forced: Option<Version>,
     requested: Option<Version>,
     decoder: Option<Decoder>,
+    forced_error: Option<String>,
 }
 
 impl Dispatcher {
@@ -69,12 +70,24 @@ impl Dispatcher {
     #[must_use]
     pub fn new(policy: Policy, forced: Option<Version>) -> Self {
         let policy = ParsePolicy::from(policy);
-        let decoder = forced.and_then(|v| Decoder::new(v).ok().map(|d| d.with_policy(policy)));
+        let (decoder, forced_error) = match forced {
+            Some(version) => match Decoder::new(version) {
+                Ok(decoder) => (Some(decoder.with_policy(policy)), None),
+                Err(error) => (
+                    None,
+                    Some(format!(
+                        "unsupported NatNet protocol version {version}: {error}; set protocol_version to decode with a supported one"
+                    )),
+                ),
+            },
+            None => (None, None),
+        };
         Self {
             policy,
             forced,
             requested: None,
             decoder,
+            forced_error,
         }
     }
 
@@ -99,7 +112,10 @@ impl Dispatcher {
     /// A message for a version `natnet` cannot decode.
     pub fn adopt(&mut self, version: Version) -> Result<(), String> {
         if self.forced.is_some() {
-            return Ok(());
+            return self
+                .forced_error
+                .as_ref()
+                .map_or(Ok(()), |error| Err(error.clone()));
         }
         let decoder = Decoder::new(version).map_err(|e| {
             format!(
@@ -188,8 +204,14 @@ impl Dispatcher {
             },
             natnet::NAT_FRAMEOFDATA => {
                 let Some(decoder) = self.decoder else {
-                    // Frames before SERVERINFO: nothing to decode them with.
-                    return Outcome::Error;
+                    // A bad forced version is a permanent configuration
+                    // error. Frames before SERVERINFO remain transient.
+                    return match &self.forced_error {
+                        Some(error) => {
+                            deliver(ctx, SourceEvent::DecodeError(error.clone()), Outcome::Error)
+                        }
+                        None => Outcome::Error,
+                    };
                 };
                 match decoder
                     .parse(datagram)
@@ -292,5 +314,38 @@ mod tests {
             Ok(SourceEvent::ServerInfo(i)) => assert_eq!(i.protocol_version, Version::V4_1),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn unsupported_forced_version_is_reported_and_supported_force_is_preserved() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        let ctx = SourceContext {
+            events: tx,
+            stop: Arc::new(AtomicBool::new(false)),
+            dropped: Arc::new(AtomicU64::new(0)),
+            dropped_reports: Arc::new(AtomicU64::new(0)),
+            lossless: Arc::new(AtomicBool::new(false)),
+        };
+        let version = Version::new(5, 0, 0, 0);
+        let mut dispatcher = Dispatcher::new(Policy::Strict, Some(version));
+        assert!(
+            dispatcher
+                .adopt(Version::V4_1)
+                .unwrap_err()
+                .contains("unsupported NatNet protocol version 5.0")
+        );
+        let outcome = dispatcher.dispatch(
+            &ctx,
+            &[natnet::NAT_FRAMEOFDATA as u8, 0, 0, 0],
+            SystemTime::now(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, Outcome::Error);
+        assert!(
+            matches!(rx.try_recv(), Ok(SourceEvent::DecodeError(message)) if message.contains("unsupported NatNet protocol version 5.0"))
+        );
+
+        let supported = Dispatcher::new(Policy::Compatible, Some(Version::V4_1));
+        assert_eq!(supported.version(), Some(Version::V4_1));
     }
 }

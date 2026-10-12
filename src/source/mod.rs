@@ -325,6 +325,18 @@ impl SourceHandle {
             let _ = t.join();
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_running(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.thread.is_none()
+    }
 }
 
 impl Drop for SourceHandle {

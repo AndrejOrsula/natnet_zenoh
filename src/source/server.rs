@@ -363,12 +363,14 @@ impl State {
                                 break (r.time_ns, r.bytes);
                             }
                             Some(Ok(_)) => {}
-                            end => {
-                                // A read error ends the pass like the end of
-                                // the file: the rest cannot be framed.
-                                if let Some(Err(e)) = end {
-                                    warn!("capture read failed: {e}");
-                                }
+                            Some(Err(e)) => {
+                                warn!("capture read failed: {e}");
+                                *finished = true;
+                                return None;
+                            }
+                            None => {
+                                // Clean EOF can restart a nonempty looping
+                                // capture; a read error terminates above.
                                 if !(*looping && *pass_had_frames) {
                                     if *looping {
                                         warn!("the capture has no frames to loop over");

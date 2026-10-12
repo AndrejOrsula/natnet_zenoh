@@ -366,6 +366,14 @@ fn check_files(cfg: &Config) -> Result<(), String> {
     Ok(())
 }
 
+fn router_wait_stopped_result(duration_expired: bool) -> Result<(), String> {
+    if duration_expired {
+        Err("no frames received".into())
+    } else {
+        Ok(())
+    }
+}
+
 /// Loads the configuration of a live-only command (`probe`, `record`).
 fn live_config(args: &LiveArgs) -> Result<Config, String> {
     let mut cfg = load_config(args.config_path().as_ref())?;
@@ -436,11 +444,14 @@ fn run(args: &RunArgs, mut rosout: RosoutHandle) -> Result<(), String> {
     check_files(&cfg)?;
 
     let stop = stop_flag();
+    let duration_expired = Arc::new(AtomicBool::new(false));
     if let Some(d) = args.duration {
         let s = Arc::clone(&stop);
+        let expired = Arc::clone(&duration_expired);
         std::thread::spawn(move || {
             std::thread::sleep(d);
-            s.store(true, Ordering::Relaxed);
+            expired.store(true, Ordering::Relaxed);
+            s.store(true, Ordering::Release);
         });
     }
     // Open zenoh here rather than in the bridge, so that a stop request
@@ -452,8 +463,8 @@ fn run(args: &RunArgs, mut rosout: RosoutHandle) -> Result<(), String> {
         if let Some(attempts) = attempts {
             ctx.wait_for_router(attempts, &stop);
         }
-        if stop.load(Ordering::Relaxed) {
-            return Ok(());
+        if stop.load(Ordering::Acquire) {
+            return router_wait_stopped_result(duration_expired.load(Ordering::Relaxed));
         }
         Some(ctx)
     } else {
@@ -862,5 +873,40 @@ fn main() -> ExitCode {
             error!("{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_probe_rate_counts_intervals() {
+        assert!((arrival_rate(1001, Duration::from_secs(10)) - 100.0).abs() < 1e-9);
+        assert_eq!(arrival_rate(1, Duration::from_secs(10)), 0.0);
+        assert_eq!(arrival_rate(0, Duration::ZERO), 0.0);
+        assert_eq!(arrival_rate(5, Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn no_frames_names_the_source_error() {
+        let e = "cannot receive multicast 239.255.42.99:1511: binding 239.255.42.99:1511: \
+                 Address already in use (os error 98)";
+        let message = no_frames(Some(e));
+        assert!(message.starts_with("no frames received"), "{message}");
+        assert!(message.contains(e), "{message}");
+        assert_eq!(
+            no_frames(None),
+            "no frames received; check that Motive streams to this host (--server, --interface)"
+        );
+    }
+
+    #[test]
+    fn startup_stop_is_an_error_only_when_duration_expired() {
+        assert_eq!(
+            router_wait_stopped_result(true).unwrap_err(),
+            "no frames received"
+        );
+        assert_eq!(router_wait_stopped_result(false), Ok(()));
     }
 }

@@ -191,6 +191,7 @@ pub fn run(cfg: &ReplayConfig, ctx: &SourceContext, commands: &Receiver<SourceCo
         let mut origin: Option<(u64, Instant)> = None;
         let mut last: Option<u64> = None;
         let mut frames_this_pass = 0_u64;
+        let mut read_failed = false;
         let pass_start = Instant::now();
         for record in reader {
             if ctx.stopped() {
@@ -210,6 +211,7 @@ pub fn run(cfg: &ReplayConfig, ctx: &SourceContext, commands: &Receiver<SourceCo
                 Err(e) => {
                     warn!("capture read stopped: {e}");
                     ctx.send(SourceEvent::DecodeError(e.to_string()));
+                    read_failed = true;
                     break;
                 }
             };
@@ -264,7 +266,7 @@ pub fn run(cfg: &ReplayConfig, ctx: &SourceContext, commands: &Receiver<SourceCo
                 _ => {}
             }
         }
-        if !cfg.looping || ctx.stopped() {
+        if !cfg.looping || ctx.stopped() || read_failed {
             break;
         }
         if frames_this_pass == 0 {
@@ -278,4 +280,107 @@ pub fn run(cfg: &ReplayConfig, ctx: &SourceContext, commands: &Receiver<SourceCo
         info!("replay looping");
     }
     ctx.send(SourceEvent::Connection(ConnectionState::Finished));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::source::capture::{CaptureWriter, Format, Record};
+    use crate::source::synthetic::{Scene, SyntheticConfig};
+
+    #[test]
+    fn corrupt_tail_ends_loop_after_one_valid_frame() {
+        let path = std::env::temp_dir().join(format!(
+            "natnet-zenoh-corrupt-replay-{}-{}.natnet",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let mut writer = CaptureWriter::create(&path, Format::NatNet).unwrap();
+        writer
+            .write(&Record {
+                time_ns: 0,
+                source: None,
+                bytes: scene.frame_datagram(1).unwrap(),
+            })
+            .unwrap();
+        drop(writer);
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&[1, 2, 3])
+            .unwrap();
+
+        let cfg = ReplayConfig {
+            path: path.clone(),
+            rate: 0.0,
+            looping: true,
+            ..ReplayConfig::default()
+        };
+        let mut source =
+            crate::source::SourceHandle::spawn("test-corrupt-replay", 16, move |ctx, commands| {
+                run(&cfg, &ctx, &commands);
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut seen = Vec::new();
+        let mut repeated_frame = false;
+        let mut finished = false;
+        while Instant::now() < deadline && !repeated_frame && !finished {
+            match source.next_event(Duration::from_millis(25)) {
+                Ok(event) => {
+                    if matches!(event, SourceEvent::Frame { .. })
+                        && seen
+                            .iter()
+                            .any(|old| matches!(old, SourceEvent::Frame { .. }))
+                    {
+                        repeated_frame = true;
+                    }
+                    if matches!(event, SourceEvent::Connection(ConnectionState::Finished)) {
+                        finished = true;
+                    }
+                    seen.push(event);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        source.stop();
+        drop(source);
+        let cleanup = fs::remove_file(path);
+        let cleanup_succeeded = cleanup.is_ok();
+
+        let frames = seen
+            .iter()
+            .filter(|e| matches!(e, SourceEvent::Frame { .. }))
+            .count();
+        let errors = seen
+            .iter()
+            .filter(|e| matches!(e, SourceEvent::DecodeError(_)))
+            .count();
+        assert!(
+            cleanup_succeeded,
+            "capture fixture cleanup failed: {cleanup:?}"
+        );
+        assert!(
+            !repeated_frame,
+            "loop replayed a valid frame after corruption (frames={frames}, errors={errors}, finished={finished})"
+        );
+        assert!(finished, "replay did not finish before deadline");
+        assert_eq!(frames, 1, "replay emitted repeated frames");
+        assert_eq!(errors, 1, "replay did not report corrupt tail");
+        assert!(matches!(
+            seen.last(),
+            Some(SourceEvent::Connection(ConnectionState::Finished))
+        ));
+    }
 }
