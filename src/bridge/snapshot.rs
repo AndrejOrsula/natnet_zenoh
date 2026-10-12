@@ -263,7 +263,6 @@ pub struct Processor {
     pub stats: StreamStats,
     unknown: BTreeSet<String>,
     server_info: Option<ServerInfo>,
-    model_version: Option<Version>,
 }
 
 impl Processor {
@@ -298,7 +297,6 @@ impl Processor {
             stats: StreamStats::default(),
             unknown: BTreeSet::new(),
             server_info: None,
-            model_version: None,
         };
         p.rebuild_names();
         p
@@ -362,7 +360,6 @@ impl Processor {
             }
         }
         self.model = model;
-        self.model_version = Some(version);
         self.unknown.clear();
         self.rebuild_names();
         self.model.errors.clone()

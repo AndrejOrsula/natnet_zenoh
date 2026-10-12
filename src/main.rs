@@ -83,7 +83,7 @@ impl From<TransportArg> for Transport {
 struct LiveArgs {
     /// Configuration file (TOML); defaults apply without one. Falls back to
     /// a non-empty NATNET_ZENOH_CONFIG environment variable.
-    #[arg(long, short = 'c')]
+    #[arg(long, short = 'c', help_heading = "Configuration")]
     config: Option<PathBuf>,
     /// Motive's address (omit to discover it from the multicast stream).
     #[arg(long, short = 's')]
@@ -159,58 +159,58 @@ impl LiveArgs {
 
 #[derive(Debug, Args)]
 struct RunArgs {
-    #[command(flatten)]
+    #[command(flatten, next_help_heading = "Live NatNet source")]
     live: LiveArgs,
     /// Replay this capture instead of connecting to Motive.
-    #[arg(long, conflicts_with_all = [
+    #[arg(long, help_heading = "Replay and synthetic source", conflicts_with_all = [
         "synthetic", "server", "passive", "transport", "interface", "multicast_group",
         "command_port", "data_port", "request_bitstream",
     ])]
     replay: Option<PathBuf>,
     /// Replay speed (0: as fast as possible).
-    #[arg(long)]
+    #[arg(long, help_heading = "Replay and synthetic source")]
     rate: Option<f64>,
     /// Loop the replay.
-    #[arg(long = "loop")]
+    #[arg(long = "loop", help_heading = "Replay and synthetic source")]
     looping: bool,
     /// A raw MODELDEF datagram for captures or passive streams without one.
-    #[arg(long)]
+    #[arg(long, help_heading = "Replay and synthetic source")]
     model_file: Option<PathBuf>,
     /// Stream the built-in synthetic scene.
-    #[arg(long, conflicts_with_all = [
+    #[arg(long, help_heading = "Replay and synthetic source", conflicts_with_all = [
         "server", "passive", "transport", "interface", "multicast_group", "command_port",
         "data_port", "protocol_version", "model_file", "request_bitstream",
     ])]
     synthetic: bool,
     /// ROS domain id.
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     domain_id: Option<u32>,
     /// ROS node name.
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     node_name: Option<String>,
     /// ROS namespace.
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     namespace: Option<String>,
     /// Fixed mocap world frame.
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     world_frame: Option<String>,
     /// Up axis of the Motive stream (Motive's streaming "Up Axis" setting).
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     up_axis: Option<UpAxisArg>,
     /// Disable the ROS 2 outputs.
-    #[arg(long)]
+    #[arg(long, help_heading = "ROS 2")]
     no_ros: bool,
     /// Enable the native zenoh outputs.
-    #[arg(long)]
+    #[arg(long, help_heading = "Zenoh")]
     native: bool,
     /// Zenoh session configuration file.
-    #[arg(long)]
+    #[arg(long, help_heading = "Zenoh")]
     zenoh_config: Option<PathBuf>,
     /// Zenoh endpoint to connect to (repeatable), e.g. tcp/10.0.0.2:7447.
-    #[arg(long)]
+    #[arg(long, help_heading = "Zenoh")]
     connect: Vec<String>,
     /// Stop after this many seconds; exits with an error if no frame came.
-    #[arg(long, value_parser = parse_seconds)]
+    #[arg(long, help_heading = "Run control", value_parser = parse_seconds)]
     duration: Option<Duration>,
 }
 

@@ -113,9 +113,13 @@ impl SourceContext {
         }
     }
 
-    /// Delivers a frame without blocking; a full queue drops the frame
-    /// (the consumer is behind) and counts it. Returns false once the
-    /// receiver is gone.
+    /// Delivers a frame without blocking unless lossless: a full queue
+    /// drops the frame (the consumer is behind) and counts it, while a
+    /// lossless source waits for room. Send frames from one thread, in the
+    /// order they were received: [`SourceHandle::next_event`] may skip
+    /// stale frames up to the next non-frame event, which it preserves for
+    /// the following call, so it can stop before the queue's newest frame.
+    /// Returns false once the receiver is gone.
     pub fn send_frame(
         &self,
         frame: Box<FrameOfData>,

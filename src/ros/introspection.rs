@@ -43,7 +43,7 @@ pub fn describe(
         successful: true,
         failure_reason: String::new(),
         type_description: TypeDescription::from(description),
-        // No source files ship with this binary.
+        // Source files are not included in the response.
         type_sources: Vec::new(),
         extra_information: vec![KeyValue {
             key: "type_hash".into(),
@@ -55,7 +55,7 @@ pub fn describe(
 /// Serves `~/get_type_description` for the types `node` uses.
 ///
 /// # Errors
-/// Zenoh or naming errors.
+/// Zenoh or naming errors, or exhaustion of the process-wide entity ID space.
 pub fn serve_type_descriptions(node: &Node) -> Result<ServiceServer<GetTypeDescription>> {
     let registry = node.type_registry();
     node.create_service::<GetTypeDescription, _>("~/get_type_description", move |req, _| {

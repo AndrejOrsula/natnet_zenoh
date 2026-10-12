@@ -62,9 +62,9 @@ pub enum SourceKind {
 pub struct SourceConfig {
     /// The source in use.
     pub kind: SourceKind,
-    /// Event queue capacity between source and bridge. A bridge that falls
-    /// behind skips queued frames to the newest one (counted as
-    /// `queue_drops`); unpaced replays wait instead.
+    /// Capacity of the source-to-bridge event queue. A full queue drops
+    /// frames unless the source is lossless; unpaced replay (`rate = 0`)
+    /// waits for room.
     pub queue: usize,
     /// Live client settings.
     pub live: LiveConfig,

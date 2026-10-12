@@ -183,8 +183,8 @@ pub struct ContextOptions {
     /// `key=json5` overrides applied on top of the base configuration,
     /// e.g. `("connect/endpoints", "[\"tcp/10.0.0.1:7447\"]")`.
     pub overrides: Vec<(String, String)>,
-    /// How many one-second attempts to wait for a router before warning;
-    /// `None` skips the check, `Some(0)` waits forever.
+    /// How many polls to make before warning, with one-second spacing
+    /// between failed polls; `None` skips the check, `Some(0)` waits forever.
     pub router_check_attempts: Option<u64>,
     /// The `rmw_zenoh_cpp` protocol revision to speak.
     pub compat: RmwZenohCompat,
@@ -371,8 +371,9 @@ impl Context {
         ctx
     }
 
-    /// Waits up to `attempts` seconds (forever for 0) for a router
-    /// connection; returns whether one was found and warns otherwise.
+    /// Polls for a router up to `attempts` times, spacing failed polls one
+    /// second apart (forever for 0); returns whether one was found and warns
+    /// otherwise.
     pub fn check_router(&self, attempts: u64) -> bool {
         self.wait_for_router(attempts, &AtomicBool::new(false))
     }

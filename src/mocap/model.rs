@@ -1,11 +1,11 @@
 //! A typed view of a MODELDEF reply: names, hierarchy and metadata of every
 //! tracked asset, keyed by streaming id.
 //!
-//! `natnet` decodes marker sets and rigid bodies and keeps the other
-//! datasets (skeletons, force plates, devices, cameras, assets) and the
-//! rigid-body marker tails opaque; this module decodes those bodies with the
-//! grammar of the NatNet SDK. A dataset that fails to decode is recorded in
-//! [`Model::errors`] instead of failing the whole model.
+//! `natnet` exposes MODELDEF datasets as typed definitions or raw bodies.
+//! This module converts the typed definitions and decodes the raw bodies,
+//! including rigid-body marker tails, using the NatNet SDK grammar. A dataset
+//! that fails to decode is recorded in [`Model::errors`] instead of failing
+//! the whole model.
 
 use std::collections::{BTreeMap, BTreeSet};
 

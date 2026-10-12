@@ -1,11 +1,12 @@
 //! Forwards `tracing` events to `/rosout` (`rcl_interfaces/msg/Log`), so
 //! `ros2 topic echo /rosout` and rqt_console show the bridge's log.
 //!
-//! The layer never publishes on the logging thread: events are queued to a
-//! worker that owns the publisher, which avoids re-entering zenoh (whose own
-//! `tracing` events are ignored) and never blocks the caller; a full queue
-//! drops the event. The worker, and with it the `/rosout` publisher, lives
-//! as long as the [`RosoutWorker`] returned by [`RosoutHandle::attach`].
+//! Events are queued to a worker that owns the publisher, so the callback
+//! does not publish to zenoh (whose own events are ignored). `try_send` does
+//! not wait for queue space, but the callback briefly locks the shared logger
+//! name; a full queue drops the event. The worker lives as long as the
+//! [`RosoutWorker`] returned by [`RosoutHandle::attach`], along with its
+//! `/rosout` publisher.
 
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -162,7 +163,8 @@ impl RosoutHandle {
     /// logger name is the node's fully qualified name in rcl's dotted form.
     ///
     /// # Errors
-    /// Zenoh or naming errors creating the publisher.
+    /// Zenoh or naming errors creating the publisher, or exhaustion of the
+    /// process-wide entity ID space.
     pub fn attach(&mut self, node: &Node) -> super::context::Result<Option<RosoutWorker>> {
         let mut slot = self.rx.lock().unwrap_or_else(PoisonError::into_inner);
         if slot.is_none() {

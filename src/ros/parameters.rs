@@ -28,7 +28,7 @@ pub struct Param {
     pub read_only: bool,
 }
 
-/// Converts a JSON value; `None` for null and non-homogeneous arrays.
+/// Converts a JSON value; `None` for null, objects, or unrepresentable numbers.
 #[must_use]
 pub fn value_from_json(v: &serde_json::Value) -> Option<ParameterValue> {
     use serde_json::Value;
@@ -69,7 +69,7 @@ pub fn value_from_json(v: &serde_json::Value) -> Option<ParameterValue> {
                     .filter_map(|s| s.as_str().map(str::to_owned))
                     .collect();
             } else {
-                // Arrays of tables: one JSON string each.
+                // Other arrays: one JSON string per element.
                 p.r#type = ParameterValue::STRING_ARRAY;
                 p.string_array_value = items.iter().map(Value::to_string).collect();
             }
@@ -322,7 +322,7 @@ impl ParameterServer {
     /// it sees each accepted change before it is stored.
     ///
     /// # Errors
-    /// Zenoh or naming errors.
+    /// Zenoh or naming errors, or exhaustion of the process-wide entity ID space.
     pub fn new(
         node: &Node,
         params: BTreeMap<String, Param>,

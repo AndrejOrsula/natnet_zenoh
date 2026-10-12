@@ -326,7 +326,7 @@ impl Matching {
         }
     }
 
-    /// Whether a subscriber currently matches.
+    /// Whether a subscriber currently matches; true if listener setup failed.
     #[must_use]
     pub fn get(&self) -> bool {
         self.matched.load(Ordering::Relaxed)
@@ -492,7 +492,8 @@ impl RawPublisher {
             .map_err(RosError::zenoh)
     }
 
-    /// Whether any subscriber currently matches this publisher's key.
+    /// Whether any subscriber currently matches this publisher's key; true
+    /// if listener setup failed.
     #[must_use]
     pub fn has_subscribers(&self) -> bool {
         self.matching.get()
@@ -630,8 +631,8 @@ struct SubscriptionHandler<M, F> {
     _message: PhantomData<fn(M)>,
 }
 
-/// Sequence numbers remembered per publisher by transient-local
-/// subscriptions; more than any cache depth in use.
+/// Maximum sequence numbers remembered per publisher by transient-local
+/// subscriptions.
 const DEDUP_WINDOW: usize = 4096;
 
 /// How long a departed publisher's sequence numbers are kept, so that a
