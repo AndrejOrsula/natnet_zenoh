@@ -423,17 +423,18 @@ impl Processor {
                 },
             );
         }
-        let mut taken = BTreeSet::new();
+        let mut skeleton_tokens = BTreeSet::new();
         for (&id, sk) in &self.model.skeletons {
-            let token = unique(&mut taken, &sanitize_token(&sk.name), id);
+            let token = unique(&mut skeleton_tokens, &sanitize_token(&sk.name), id);
             let mut bone_names = BTreeSet::new();
             let bones = sk
                 .bones
                 .iter()
                 .map(|b| {
                     let name = unique(&mut bone_names, &sanitize_token(&b.name), b.id);
+                    let child = unique(&mut taken, &format!("{token}_{name}"), b.id);
                     let bone = BoneName {
-                        frame_id: format!("{}{token}_{name}", self.frame_prefix),
+                        frame_id: format!("{}{child}", self.frame_prefix),
                         name,
                         // A parent missing from the model stays set: its
                         // children then have no pose in local mode rather
@@ -975,6 +976,75 @@ mod tests {
             .process(&scene.frame(1), SystemTime::now(), Instant::now())
             .unwrap();
         assert_eq!(s.bodies[0].frame_id, "mocap_1");
+    }
+
+    #[test]
+    fn dynamic_tf_children_are_unique_across_bodies_and_skeleton_bones() {
+        let mut cfg = Config::default();
+        cfg.ros.frame_prefix = "mocap/".into();
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let mut md = scene.model_def();
+        let Some(natnet::DataSet::RigidBody(body)) = md
+            .datasets
+            .iter_mut()
+            .find(|dataset| matches!(dataset, natnet::DataSet::RigidBody(body) if body.id == 1))
+        else {
+            panic!("synthetic model has no rigid body 1");
+        };
+        body.name = "actor_Hip".into();
+
+        let mut p = Processor::new(&cfg);
+        let problems = p.set_model(&md, scene.version());
+        assert!(problems.is_empty(), "{problems:?}");
+        let s = p
+            .process(&scene.frame(1), SystemTime::now(), Instant::now())
+            .unwrap();
+
+        let body = s.bodies.iter().find(|body| body.id == 1).unwrap();
+        let hip = s.skeletons[0]
+            .bones
+            .iter()
+            .find(|bone| bone.name == "Hip")
+            .unwrap();
+        assert_eq!(body.frame_id, "mocap/actor_Hip");
+        assert_eq!(hip.frame_id, "mocap/actor_Hip_1");
+        assert_eq!(s.skeletons[0].name, "actor");
+
+        let children = s
+            .bodies
+            .iter()
+            .map(|body| body.frame_id.as_str())
+            .chain(
+                s.skeletons
+                    .iter()
+                    .flat_map(|sk| sk.bones.iter().map(|bone| bone.frame_id.as_str())),
+            )
+            .collect::<BTreeSet<_>>();
+        let child_count =
+            s.bodies.len() + s.skeletons.iter().map(|sk| sk.bones.len()).sum::<usize>();
+        assert_eq!(children.len(), child_count);
+    }
+
+    #[test]
+    fn generic_names_stay_unique() {
+        // Body 1 is renamed to body 2's generic name, and body 2 is missing
+        // from the model.
+        let mut cfg = Config::default();
+        cfg.rigid_bodies
+            .rename
+            .insert("body_1".into(), "rigid_body_2".into());
+        let scene = Scene::new(SyntheticConfig::default()).unwrap();
+        let mut md = scene.model_def();
+        md.datasets
+            .retain(|d| !matches!(d, natnet::DataSet::RigidBody(rb) if rb.id == 2));
+        let mut p = Processor::new(&cfg);
+        p.set_server_info(&scene.server_info(false, 0, [0; 4]));
+        p.set_model(&md, scene.version());
+        let s = p
+            .process(&scene.frame(1), SystemTime::now(), Instant::now())
+            .unwrap();
+        let names: Vec<&str> = s.bodies.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names[..2], ["rigid_body_2", "rigid_body_2_2"], "{names:?}");
     }
 
     #[test]

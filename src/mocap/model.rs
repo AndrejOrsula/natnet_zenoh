@@ -7,7 +7,7 @@
 //! grammar of the NatNet SDK. A dataset that fails to decode is recorded in
 //! [`Model::errors`] instead of failing the whole model.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use natnet::modeldef::{TYPE_ASSET, TYPE_CAMERA, TYPE_DEVICE, TYPE_FORCE_PLATE, TYPE_SKELETON};
 use natnet::{AssetDef, DataSet, ForcePlateDef, MarkerSetDef, ModelDef, RigidBodyDef, Version};
@@ -364,6 +364,39 @@ fn asset(r: &mut Reader<'_>, version: Version) -> Result<AssetDesc, ReadError> {
     })
 }
 
+fn insert_first<K: Ord, V>(map: &mut BTreeMap<K, V>, key: K, value: V) -> bool {
+    match map.entry(key) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(value);
+            true
+        }
+        std::collections::btree_map::Entry::Occupied(_) => false,
+    }
+}
+
+fn unique_bones(
+    bones: Vec<RigidBodyDesc>,
+    skeleton_id: i32,
+    type_id: i32,
+    errors: &mut Vec<(i32, String)>,
+) -> Vec<RigidBodyDesc> {
+    let mut seen = BTreeSet::new();
+    bones
+        .into_iter()
+        .filter(|bone| {
+            if seen.insert(bone.id) {
+                true
+            } else {
+                errors.push((
+                    type_id,
+                    format!("duplicate bone id {} in skeleton {skeleton_id}", bone.id),
+                ));
+                false
+            }
+        })
+        .collect()
+}
+
 impl Model {
     /// Decodes a model definition received under protocol `version`.
     #[must_use]
@@ -378,37 +411,60 @@ impl Model {
                 }
                 DataSet::RigidBody(def) => {
                     let (desc, error) = rigid_body_from_def(def, version);
-                    model.rigid_bodies.insert(desc.id, desc);
+                    let id = desc.id;
+                    if !insert_first(&mut model.rigid_bodies, id, desc) {
+                        model
+                            .errors
+                            .push((type_id, format!("duplicate rigid body id {id}")));
+                    }
                     error.map_or(Ok(()), Err)
                 }
                 DataSet::Skeleton(def) => {
                     rigid_bodies_from_defs(&def.rigid_bodies, version).map(|bones| {
-                        model.skeletons.insert(
-                            def.id,
+                        let bones = unique_bones(bones, def.id, type_id, &mut model.errors);
+                        let id = def.id;
+                        if !insert_first(
+                            &mut model.skeletons,
+                            id,
                             SkeletonDesc {
                                 name: def.name.clone(),
-                                id: def.id,
+                                id,
                                 bones,
                             },
-                        );
+                        ) {
+                            model
+                                .errors
+                                .push((type_id, format!("duplicate skeleton id {id}")));
+                        }
                     })
                 }
                 DataSet::ForcePlate(def) => {
-                    model.force_plates.insert(def.id, force_plate_from_def(def));
+                    let id = def.id;
+                    if !insert_first(&mut model.force_plates, id, force_plate_from_def(def)) {
+                        model
+                            .errors
+                            .push((type_id, format!("duplicate force plate id {id}")));
+                    }
                     Ok(())
                 }
                 DataSet::Device(def) => {
-                    model.devices.insert(
-                        def.id,
+                    let id = def.id;
+                    if !insert_first(
+                        &mut model.devices,
+                        id,
                         DeviceDesc {
-                            id: def.id,
+                            id,
                             name: def.name.clone(),
                             serial: def.serial_number.clone(),
                             device_type: def.device_type,
                             channel_data_type: def.channel_data_type,
                             channel_names: def.channel_names.clone(),
                         },
-                    );
+                    ) {
+                        model
+                            .errors
+                            .push((type_id, format!("duplicate device id {id}")));
+                    }
                     Ok(())
                 }
                 DataSet::Camera(def) => {
@@ -420,25 +476,51 @@ impl Model {
                     Ok(())
                 }
                 DataSet::Asset(def) => asset_from_def(def, version).map(|a| {
-                    model.assets.insert(a.id, a);
+                    let id = a.id;
+                    if !insert_first(&mut model.assets, id, a) {
+                        model
+                            .errors
+                            .push((type_id, format!("duplicate asset id {id}")));
+                    }
                 }),
                 // `natnet` keeps a description it could not represent exactly
                 // (and any dataset a generator builds by hand) as raw bytes.
                 DataSet::Other { type_id, body } => {
                     let mut r = Reader::new(body);
                     match *type_id {
-                        TYPE_SKELETON => skeleton(&mut r, version).map(|s| {
-                            model.skeletons.insert(s.id, s);
+                        TYPE_SKELETON => skeleton(&mut r, version).map(|mut s| {
+                            s.bones = unique_bones(s.bones, s.id, *type_id, &mut model.errors);
+                            let id = s.id;
+                            if !insert_first(&mut model.skeletons, id, s) {
+                                model
+                                    .errors
+                                    .push((*type_id, format!("duplicate skeleton id {id}")));
+                            }
                         }),
                         TYPE_FORCE_PLATE => force_plate(&mut r).map(|f| {
-                            model.force_plates.insert(f.id, f);
+                            let id = f.id;
+                            if !insert_first(&mut model.force_plates, id, f) {
+                                model
+                                    .errors
+                                    .push((*type_id, format!("duplicate force plate id {id}")));
+                            }
                         }),
                         TYPE_DEVICE => device(&mut r).map(|d| {
-                            model.devices.insert(d.id, d);
+                            let id = d.id;
+                            if !insert_first(&mut model.devices, id, d) {
+                                model
+                                    .errors
+                                    .push((*type_id, format!("duplicate device id {id}")));
+                            }
                         }),
                         TYPE_CAMERA => camera(&mut r).map(|c| model.cameras.push(c)),
                         TYPE_ASSET => asset(&mut r, version).map(|a| {
-                            model.assets.insert(a.id, a);
+                            let id = a.id;
+                            if !insert_first(&mut model.assets, id, a) {
+                                model
+                                    .errors
+                                    .push((*type_id, format!("duplicate asset id {id}")));
+                            }
                         }),
                         _ => Ok(()),
                     }
@@ -742,5 +824,108 @@ mod tests {
         let model = Model::from_modeldef(&md, Version::V4_1);
         assert_eq!(model.errors.len(), 1);
         assert!(model.skeletons.is_empty());
+    }
+
+    #[test]
+    fn duplicate_ids_keep_first_definition_and_report_errors() {
+        let force_plate = |id, serial: &str| ForcePlateDesc {
+            id,
+            serial: serial.into(),
+            width: 0.6,
+            length: 0.4,
+            origin: [0.0; 3],
+            calibration: vec![0.0; 144],
+            corners: [[0.0; 3]; 4],
+            plate_type: 1,
+            channel_data_type: 0,
+            channel_names: vec![],
+        };
+        let device = |id, name: &str| DeviceDesc {
+            id,
+            name: name.into(),
+            serial: String::new(),
+            device_type: 1,
+            channel_data_type: 0,
+            channel_names: vec![],
+        };
+        let asset = |id, name: &str| AssetDef {
+            name: name.into(),
+            asset_type: 1,
+            id,
+            rigid_bodies: vec![],
+            markers: vec![],
+        };
+        let skeleton = |name: &str| SkeletonDesc {
+            name: name.into(),
+            id: 7,
+            bones: vec![body("Hip", 1), body("DuplicateHip", 1)],
+        };
+        let mut bone_duplicates = skeleton("bone duplicates");
+        bone_duplicates.id = 8;
+        let version = Version::V4_1;
+        let md = ModelDef {
+            datasets: vec![
+                encode::rigid_body(&body("first body", 7), version),
+                encode::rigid_body(&body("later body", 7), version),
+                // The same numeric ID is valid across independent categories.
+                encode::skeleton(
+                    &SkeletonDesc {
+                        bones: vec![],
+                        ..skeleton("first skeleton")
+                    },
+                    version,
+                ),
+                encode::skeleton(
+                    &SkeletonDesc {
+                        bones: vec![],
+                        ..skeleton("later skeleton")
+                    },
+                    version,
+                ),
+                encode::force_plate(&force_plate(7, "first plate")),
+                encode::force_plate(&force_plate(7, "later plate")),
+                encode::device(&device(7, "first device")),
+                encode::device(&device(7, "later device")),
+                DataSet::Asset(asset(7, "first asset")),
+                DataSet::Asset(asset(7, "later asset")),
+                encode::skeleton(&bone_duplicates, version),
+            ],
+        };
+
+        let model = Model::from_modeldef(&md, version);
+        assert_eq!(model.rigid_bodies[&7].name, "first body");
+        assert_eq!(model.skeletons[&7].name, "first skeleton");
+        assert_eq!(model.force_plates[&7].serial, "first plate");
+        assert_eq!(model.devices[&7].name, "first device");
+        assert_eq!(model.assets[&7].name, "first asset");
+        assert_eq!(model.skeletons[&7].bones.len(), 0);
+        assert_eq!(
+            model
+                .errors
+                .iter()
+                .map(|(_, error)| error.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "duplicate rigid body id 7",
+                "duplicate skeleton id 7",
+                "duplicate force plate id 7",
+                "duplicate device id 7",
+                "duplicate asset id 7",
+                "duplicate bone id 1 in skeleton 8",
+            ]
+        );
+        let bones = model
+            .skeletons
+            .values()
+            .find(|s| s.name == "bone duplicates")
+            .unwrap();
+        assert_eq!(
+            bones
+                .bones
+                .iter()
+                .map(|b| b.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Hip"]
+        );
     }
 }
