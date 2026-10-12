@@ -35,6 +35,9 @@ pub enum RosError {
     /// A service server replied with an error.
     #[error("service replied with an error: {0}")]
     ServiceError(String),
+    /// The process-wide ROS entity id space is exhausted.
+    #[error("ROS entity id space exhausted")]
+    EntityIdExhausted,
 }
 
 impl RosError {
@@ -45,6 +48,23 @@ impl RosError {
 
 /// Result alias of the ROS 2 layer.
 pub type Result<T> = std::result::Result<T, RosError>;
+
+static NEXT_ENTITY_ID: AtomicU64 = AtomicU64::new(0);
+
+fn allocate_entity_id(next: &AtomicU64) -> Result<u64> {
+    loop {
+        let id = next.load(Ordering::Relaxed);
+        let Some(successor) = id.checked_add(1) else {
+            return Err(RosError::EntityIdExhausted);
+        };
+        if next
+            .compare_exchange_weak(id, successor, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return Ok(id);
+        }
+    }
+}
 
 /// Where the zenoh session configuration comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -300,7 +320,6 @@ pub(crate) struct ContextInner {
     pub(crate) enclave: String,
     pub(crate) zid: String,
     pub(crate) compat: RmwZenohCompat,
-    next_entity_id: AtomicU64,
 }
 
 /// A ROS 2 context: one zenoh session plus the domain and enclave.
@@ -344,7 +363,6 @@ impl Context {
                 enclave: options.enclave.clone(),
                 zid,
                 compat: options.compat,
-                next_entity_id: AtomicU64::new(0),
             }),
         };
         if let Some(attempts) = options.router_check_attempts {
@@ -417,14 +435,15 @@ impl Context {
         self.inner.compat
     }
 
-    pub(crate) fn next_entity_id(&self) -> u64 {
-        self.inner.next_entity_id.fetch_add(1, Ordering::Relaxed)
+    pub(crate) fn next_entity_id() -> Result<u64> {
+        allocate_entity_id(&NEXT_ENTITY_ID)
     }
 
     /// Creates a node.
     ///
     /// # Errors
-    /// [`RosError`] for an invalid name or namespace or a zenoh failure.
+    /// [`RosError`] for an invalid name or namespace, a zenoh failure, or
+    /// exhaustion of the process-wide entity id space.
     pub fn create_node(&self, name: &str, namespace: &str) -> Result<Node> {
         Node::new(self.clone(), name, namespace)
     }

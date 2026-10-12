@@ -67,7 +67,7 @@ impl Node {
         names::validate_node_name(name)?;
         let namespace = names::normalize_namespace(namespace);
         names::validate_namespace(&namespace)?;
-        let nid = ctx.next_entity_id();
+        let nid = Context::next_entity_id()?;
         let info = NodeInfo {
             domain_id: ctx.domain_id(),
             enclave: ctx.inner.enclave.clone(),
@@ -152,21 +152,22 @@ impl Node {
         )?)
     }
 
-    fn entity(&self, kind: EntityKind, topic: TopicInfo) -> Entity {
-        Entity {
+    fn entity(&self, kind: EntityKind, topic: TopicInfo) -> Result<Entity> {
+        Ok(Entity {
             zid: self.ctx.zid().to_owned(),
             nid: self.nid,
-            id: self.ctx.next_entity_id(),
+            id: Context::next_entity_id()?,
             kind,
             node: self.info.clone(),
             topic: Some(topic),
-        }
+        })
     }
 
     /// Creates a publisher.
     ///
     /// # Errors
-    /// [`RosError`] for an invalid topic name or a zenoh failure.
+    /// [`RosError`] for an invalid topic name, a zenoh failure, or
+    /// exhaustion of the process-wide entity id space.
     pub fn create_publisher<M: Message>(
         &self,
         topic: &str,
@@ -181,7 +182,7 @@ impl Node {
                 type_hash: self.ctx.compat().type_hash_key(M::type_hash()),
                 qos,
             },
-        );
+        )?;
         let raw = RawPublisher::new(&self.ctx, entity)?;
         self.register_type(M::TYPE_NAME, M::type_description);
         Ok(Publisher {
@@ -195,7 +196,8 @@ impl Node {
     /// every received message.
     ///
     /// # Errors
-    /// [`RosError`] for an invalid topic name or a zenoh failure.
+    /// [`RosError`] for an invalid topic name, a zenoh failure, or
+    /// exhaustion of the process-wide entity id space.
     pub fn create_subscription<M, F>(
         &self,
         topic: &str,
@@ -215,7 +217,7 @@ impl Node {
                 type_hash: self.ctx.compat().type_hash_key(M::type_hash()),
                 qos,
             },
-        );
+        )?;
         let sub = Subscription::new(&self.ctx, entity, callback)?;
         self.register_type(M::TYPE_NAME, M::type_description);
         Ok(sub)
@@ -225,7 +227,8 @@ impl Node {
     /// every request.
     ///
     /// # Errors
-    /// [`RosError`] for an invalid service name or a zenoh failure.
+    /// [`RosError`] for an invalid service name, a zenoh failure, or
+    /// exhaustion of the process-wide entity id space.
     pub fn create_service<S, F>(&self, name: &str, handler: F) -> Result<ServiceServer<S>>
     where
         S: Service,
@@ -239,7 +242,7 @@ impl Node {
                 type_hash: self.ctx.compat().type_hash_key(S::type_hash()),
                 qos: QosProfile::services_default().adapted(self.ctx.compat().qos_defaults()),
             },
-        );
+        )?;
         let server = ServiceServer::new(&self.ctx, entity, handler)?;
         self.register_type(S::TYPE_NAME, S::type_description);
         Ok(server)
@@ -248,7 +251,8 @@ impl Node {
     /// Creates a service client.
     ///
     /// # Errors
-    /// [`RosError`] for an invalid service name or a zenoh failure.
+    /// [`RosError`] for an invalid service name, a zenoh failure, or
+    /// exhaustion of the process-wide entity id space.
     pub fn create_client<S: Service>(&self, name: &str) -> Result<Client<S>> {
         let entity = self.entity(
             EntityKind::Client,
@@ -258,7 +262,7 @@ impl Node {
                 type_hash: self.ctx.compat().type_hash_key(S::type_hash()),
                 qos: QosProfile::services_default().adapted(self.ctx.compat().qos_defaults()),
             },
-        );
+        )?;
         let token = declare_token(&self.ctx, &entity)?;
         self.register_type(S::TYPE_NAME, S::type_description);
         Ok(Client {
@@ -587,7 +591,8 @@ enum ZenohSubscriber {
     Advanced(AdvancedSubscriber<()>),
 }
 
-/// A typed subscription. Dropping it undeclares the subscriber.
+/// A typed subscription. Dropping it undeclares the subscriber; callbacks
+/// already dispatched may finish afterward.
 pub struct Subscription<M> {
     entity: Entity,
     alive: Arc<AtomicBool>,
@@ -599,7 +604,8 @@ pub struct Subscription<M> {
 
 impl<M> Drop for Subscription<M> {
     fn drop(&mut self) {
-        // History queries still in flight must not reach the callback.
+        // Suppress history replies that have not passed the alive check.
+        // An already-dispatched callback may still complete after this drop.
         self.alive.store(false, Ordering::Relaxed);
     }
 }
