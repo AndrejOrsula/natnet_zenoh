@@ -353,24 +353,45 @@ impl<'a> CdrReader<'a> {
     /// `min_element` bytes can fit in the remaining buffer.
     pub fn seq_len(&mut self, min_element: usize) -> Result<usize> {
         let count = self.u32()? as usize;
+        self.check_seq_len(count, min_element)?;
+        Ok(count)
+    }
+
+    /// Reads a sequence length, rejecting counts above `bound` before item
+    /// decoding, then checks that the minimum encoded elements fit.
+    pub(crate) fn bounded_seq_len(&mut self, min_element: usize, bound: usize) -> Result<usize> {
+        let count = self.u32()? as usize;
+        if count > bound {
+            return Err(CdrError::BoundExceeded { len: count, bound });
+        }
+        self.check_seq_len(count, min_element)?;
+        Ok(count)
+    }
+
+    fn check_seq_len(&self, count: usize, min_element: usize) -> Result<()> {
         let remaining = self.remaining();
         if min_element > 0 && count > remaining / min_element {
             return Err(CdrError::ImplausibleLength { count, remaining });
         }
-        Ok(count)
+        Ok(())
+    }
+
+    /// Reads a CDR string and returns its content bytes without allocating.
+    /// A final NUL is removed; missing terminators remain tolerated.
+    pub(crate) fn string_bytes(&mut self) -> Result<&'a [u8]> {
+        let len = self.seq_len(1)?;
+        if len == 0 {
+            // Some writers encode an empty string as a bare zero length.
+            return Ok(&[]);
+        }
+        let bytes = self.take(len)?;
+        Ok(bytes.strip_suffix(&[0]).unwrap_or(bytes))
     }
 
     /// Reads a NUL-terminated CDR string. A missing terminator is tolerated
     /// and invalid UTF-8 is replaced, as a lenient reader of foreign data.
     pub fn string(&mut self) -> Result<String> {
-        let len = self.seq_len(1)?;
-        if len == 0 {
-            // Some writers encode an empty string as a bare zero length.
-            return Ok(String::new());
-        }
-        let bytes = self.take(len)?;
-        let text = bytes.strip_suffix(&[0]).unwrap_or(bytes);
-        Ok(String::from_utf8_lossy(text).into_owned())
+        Ok(String::from_utf8_lossy(self.string_bytes()?).into_owned())
     }
 }
 

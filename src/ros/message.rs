@@ -255,14 +255,8 @@ impl<T: RosType, const N: usize> RosField for BoundedVec<T, N> {
         self.0.write_field(w)
     }
     fn read_field(r: &mut CdrReader<'_>) -> cdr::Result<Self> {
-        let v = Vec::<T>::read_field(r)?;
-        if v.len() > N {
-            return Err(cdr::CdrError::BoundExceeded {
-                len: v.len(),
-                bound: N,
-            });
-        }
-        Ok(Self(v))
+        let n = r.bounded_seq_len(T::MIN_SIZE, N)?;
+        T::read_vec(r, n).map(Self)
     }
     fn default_value() -> Self {
         Self(Vec::new())
@@ -288,7 +282,14 @@ impl<const N: usize> RosType for BoundedString<N> {
         w.string(&self.0)
     }
     fn read(r: &mut CdrReader<'_>) -> cdr::Result<Self> {
-        let s = r.string()?;
+        let bytes = r.string_bytes()?;
+        if bytes.len() > N {
+            return Err(cdr::CdrError::BoundExceeded {
+                len: bytes.len(),
+                bound: N,
+            });
+        }
+        let s = String::from_utf8_lossy(bytes).into_owned();
         if s.len() > N {
             return Err(cdr::CdrError::BoundExceeded {
                 len: s.len(),
@@ -591,6 +592,32 @@ macro_rules! ros_message {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        static ITEM_READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct CountedItem;
+
+    impl RosType for CountedItem {
+        const MIN_SIZE: usize = 1;
+
+        fn element_type() -> FieldType {
+            FieldType::primitive(field_type::UINT8)
+        }
+
+        fn write(&self, _w: &mut CdrWriter) -> cdr::Result<()> {
+            Ok(())
+        }
+
+        fn read(r: &mut CdrReader<'_>) -> cdr::Result<Self> {
+            ITEM_READS.with(|reads| reads.set(reads.get() + 1));
+            r.u8()?;
+            Ok(Self)
+        }
+    }
 
     #[test]
     fn dds_names() {
@@ -602,5 +629,63 @@ mod tests {
             dds_type_name("std_srvs/srv/Trigger"),
             "std_srvs::srv::dds_::Trigger_"
         );
+    }
+
+    #[test]
+    fn bounded_sequence_rejects_count_before_reading_items() {
+        ITEM_READS.with(|reads| reads.set(0));
+        let payload = [0, 1, 0, 0, 2, 0, 0, 0, 10, 11];
+        let mut reader = CdrReader::new(&payload).unwrap();
+
+        assert_eq!(
+            BoundedVec::<CountedItem, 1>::read_field(&mut reader),
+            Err(cdr::CdrError::BoundExceeded { len: 2, bound: 1 })
+        );
+        ITEM_READS.with(|reads| assert_eq!(reads.get(), 0));
+    }
+
+    #[test]
+    fn bounded_string_checks_raw_bytes_then_preserves_lossy_bound() {
+        let over_bound = [0, 1, 0, 0, 3, 0, 0, 0, 0xff, 0xfe, 0];
+        let mut reader = CdrReader::new(&over_bound).unwrap();
+        assert_eq!(
+            BoundedString::<1>::read(&mut reader),
+            Err(cdr::CdrError::BoundExceeded { len: 2, bound: 1 })
+        );
+
+        let lossy_expansion = [0, 1, 0, 0, 2, 0, 0, 0, 0xff, 0];
+        let mut reader = CdrReader::new(&lossy_expansion).unwrap();
+        assert_eq!(
+            BoundedString::<1>::read(&mut reader),
+            Err(cdr::CdrError::BoundExceeded { len: 3, bound: 1 })
+        );
+
+        let terminated = [0, 1, 0, 0, 2, 0, 0, 0, b'a', 0];
+        let mut reader = CdrReader::new(&terminated).unwrap();
+        assert_eq!(
+            BoundedString::<1>::read(&mut reader),
+            Ok(BoundedString("a".into()))
+        );
+
+        let unterminated = [0, 1, 0, 0, 1, 0, 0, 0, b'a'];
+        let mut reader = CdrReader::new(&unterminated).unwrap();
+        assert_eq!(
+            BoundedString::<1>::read(&mut reader),
+            Ok(BoundedString("a".into()))
+        );
+
+        let interior_nul = [0, 1, 0, 0, 4, 0, 0, 0, b'a', 0, b'b', 0];
+        let mut reader = CdrReader::new(&interior_nul).unwrap();
+        assert_eq!(
+            BoundedString::<3>::read(&mut reader),
+            Ok(BoundedString("a\0b".into()))
+        );
+
+        let truncated = [0, 1, 0, 0, 3, 0, 0, 0, b'a'];
+        let mut reader = CdrReader::new(&truncated).unwrap();
+        assert!(matches!(
+            BoundedString::<1>::read(&mut reader),
+            Err(cdr::CdrError::ImplausibleLength { .. })
+        ));
     }
 }
