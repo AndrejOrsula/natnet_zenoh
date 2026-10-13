@@ -4,11 +4,15 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 license = "Apache-2.0 OR MIT"
-description = "Pure-Rust bridge from OptiTrack NatNet to Zenoh, with native ROS 2 (rmw_zenoh) interoperability: TF, poses, odometry, markers, skeletons, force plates, diagnostics and services."
+description = "Bridge from the OptiTrack NatNet protocol used by Motive to Zenoh"
 repository = "https://github.com/SpaceRL/natnet_zenoh"
 readme = "README.md"
 keywords = ["natnet", "optitrack", "zenoh", "ros2", "mocap"]
-categories = ["network-programming", "science::robotics"]
+categories = [
+    "network-programming",
+    "science::robotics",
+    "command-line-utilities",
+]
 default-run = "natnet_zenoh"
 include = [
     "/src",
