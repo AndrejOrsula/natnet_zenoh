@@ -1,0 +1,85 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy-docs:
+    name: Build & Deploy Documentation
+    runs-on: ubuntu-26.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Ensure lockfile exists
+        run: "[ -f Cargo.lock ] || cargo generate-lockfile"
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
+
+      - name: Compile documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+      - name: Configure redirect and GitHub Pages metadata
+        run: |
+          # 1. Prevent GitHub Pages Jekyll engine from ignoring files
+          touch target/doc/.nojekyll
+
+          # 2. Identify the primary crate (prefers first public library, falls back to first package)
+          crate_name=$(cargo metadata --no-deps --format-version 1 | jq -r '
+            ([.packages[] | select(.publish == null or (.publish | index("crates-io") != null)) | select(.targets[].kind[] == "lib") | .name][0]) //
+            ([.packages[] | select(.targets[].kind[] == "lib") | .name][0]) //
+            .packages[0].name
+          ' | tr -d '\r')
+
+          # 3. Rustdoc converts hyphens to underscores in generated directory names
+          crate_dir=$(echo "$crate_name" | tr '-' '_')
+
+          # 4. Generate resilient redirect landing page
+          cat <<EOF > target/doc/index.html
+          <!DOCTYPE html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <title>Redirecting to ${crate_name} Documentation</title>
+              <meta http-equiv="refresh" content="0; url=${crate_dir}/index.html">
+              <script>window.location.replace("${crate_dir}/index.html");</script>
+            </head>
+            <body>
+              <p>Redirecting to <a href="${crate_dir}/index.html">${crate_name} documentation</a>...</p>
+            </body>
+          </html>
+          EOF
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: target/doc
+          include-hidden-files: true
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

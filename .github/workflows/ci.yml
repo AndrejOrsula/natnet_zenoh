@@ -1,0 +1,287 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to crates.io"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: ${{ github.event_name != 'release' && !inputs.publish }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustfmt:
+    name: Code Formatting
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: cargo fmt
+        run: cargo fmt --all --check --verbose
+
+  test:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    needs: [rustfmt]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.toolchain == 'beta' }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04]
+        toolchain: [msrv, beta]
+        include:
+          - os: ubuntu-26.04
+            toolchain: stable
+          - os: ubuntu-26.04-arm
+            toolchain: stable
+          - os: macos-latest
+            toolchain: stable
+          - os: windows-latest
+            toolchain: stable
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve toolchain
+        id: toolchain
+        run: |
+          if [ "${{ matrix.toolchain }}" = "msrv" ]; then
+            version=$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].rust_version | select(. != null)][0] // "stable"' | tr -d '\r')
+            echo "toolchain=${version}" >> "$GITHUB_OUTPUT"
+          else
+            echo "toolchain=${{ matrix.toolchain }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.toolchain }}
+          components: ${{ matrix.toolchain == 'stable' && 'clippy' || '' }}
+
+      - name: Ensure lockfile exists
+        run: "[ -f Cargo.lock ] || cargo generate-lockfile"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
+
+      - uses: taiki-e/install-action@cargo-hack
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+
+      - name: cargo test (${{ matrix.toolchain }})
+        if: matrix.toolchain != 'stable' || matrix.os != 'ubuntu-26.04'
+        run: cargo test --workspace --locked --all-features
+
+      # Every feature only enables a Zenoh transport or capability, and each
+      # combination rebuilds Zenoh, so check each feature alone and all of
+      # them together instead of the full powerset.
+      - name: Test each feature on its own and all features together
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo hack clippy --workspace --each-feature --locked --all-targets -- -D warnings
+          cargo clippy --workspace --all-features --locked --all-targets -- -D warnings
+          cargo hack test --workspace --each-feature --locked
+          cargo hack doc --workspace --each-feature --locked --no-deps
+
+      - name: Verify package
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+        run: |
+          pkgs=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null or (.publish | index("crates-io") != null)) | .name' | tr -d '\r')
+          for pkg in $pkgs; do
+            cargo package --locked --package "$pkg" || cargo package --locked --no-verify --package "$pkg"
+          done
+
+      - name: 32-bit cross-compilation check
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+        continue-on-error: true
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          cargo check --workspace --locked --all-targets --all-features --target i686-unknown-linux-gnu
+
+      - name: Generate code coverage
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+        run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-26.04'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+
+  deny:
+    name: Dependencies & Licenses (cargo-deny)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Ensure lockfile exists
+        run: "[ -f Cargo.lock ] || cargo generate-lockfile"
+      - name: Inspect configuration
+        id: config
+        run: |
+          if [ -f "deny.toml" ] || [ -f ".cargo/deny.toml" ] || [ -f ".deny.toml" ]; then
+            echo "has_config=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_config=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Full audit (advisories, bans, licenses, sources)
+        if: steps.config.outputs.has_config == 'true'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+          arguments: --all-features
+      - name: Advisory-only audit (fallback when deny.toml is absent)
+        if: steps.config.outputs.has_config == 'false'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+          arguments: --all-features
+
+  machete:
+    name: Unused Dependencies (cargo-machete)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Ensure lockfile exists
+        run: "[ -f Cargo.lock ] || cargo generate-lockfile"
+      - uses: taiki-e/install-action@cargo-machete
+      - name: cargo machete
+        run: cargo machete
+
+  publish:
+    name: Publish to crates.io
+    if: ${{ (github.event_name == 'release' && github.event.action == 'published') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    needs: [rustfmt, test, deny, machete]
+    runs-on: ubuntu-26.04
+    environment: crates-io
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/install-action@git-cliff
+        if: github.event_name == 'release'
+
+      - name: Dry-run package verification
+        run: |
+          pkgs=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null or (.publish | index("crates-io") != null)) | .name' | tr -d '\r')
+          if [ -z "$pkgs" ]; then
+            echo "No publishable packages found."
+          else
+            for pkg in $pkgs; do
+              cargo package --locked --package "$pkg" || cargo package --locked --no-verify --package "$pkg"
+              cargo publish --locked --dry-run --package "$pkg"
+            done
+          fi
+
+      - name: Update GitHub release notes
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git cliff --tag "${{ github.event.release.tag_name }}" --strip header > "$RUNNER_TEMP/release_notes.md" || true
+          if [ -s "$RUNNER_TEMP/release_notes.md" ]; then
+            gh release edit "${{ github.event.release.tag_name }}" --notes-file "$RUNNER_TEMP/release_notes.md"
+          fi
+
+      - name: Authenticate with crates.io (OIDC)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+        continue-on-error: true
+
+      - name: Publish crate(s)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          pkgs=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish == null or (.publish | index("crates-io") != null)) | .name' | tr -d '\r')
+          for pkg in $pkgs; do
+            cargo publish --locked --package "$pkg"
+          done
+
+  release-assets:
+    name: Release Assets (${{ matrix.target }})
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [rustfmt, test, deny, machete]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Detect binary targets
+        id: targets
+        run: |
+          bins=$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].targets[] | select(.kind[] == "bin") | .name] | join(",")' | tr -d '\r')
+          if [ -n "$bins" ]; then
+            echo "has_bins=true" >> "$GITHUB_OUTPUT"
+            echo "bins=$bins" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_bins=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        if: steps.targets.outputs.has_bins == 'true'
+        with:
+          bin: ${{ steps.targets.outputs.bins }}
+          target: ${{ matrix.target }}
+          token: ${{ secrets.GITHUB_TOKEN }}

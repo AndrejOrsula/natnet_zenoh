@@ -1,0 +1,89 @@
+name: pre-commit
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }} @ ${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pre-commit:
+    name: Code Hygiene & Formatting
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Ensure lockfile exists
+        run: "[ -f Cargo.lock ] || cargo generate-lockfile"
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: .pre-commit-config.yaml
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pre-commit
+
+      - name: Execute pre-commit hooks (auto-fix)
+        id: run_hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+        continue-on-error: true
+
+      - name: Auto-commit formatted changes
+        if: |
+          steps.run_hooks.outcome == 'failure' &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "pre-commit: Apply suggestions [skip ci]"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
+          branch: ${{ github.head_ref }}
+
+      - name: Verify clean repository state
+        run: |
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "::error::Files were modified by pre-commit hooks but could not be committed automatically."
+            echo "::error::For PRs submitted from external forks, GitHub does not allow bots to push changes."
+            echo "::notice::Please run 'pre-commit run --all-files' or 'cargo fmt && cargo clippy --fix' locally and push the changes."
+            git diff
+            exit 1
+          fi
+          pre-commit run --all-files
