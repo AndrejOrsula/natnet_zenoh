@@ -7,6 +7,39 @@
 
 ## Installation
 
+### Release binary
+
+Linux (x86_64):
+
+```sh
+curl -fsSL https://github.com/AndrejOrsula/natnet_zenoh/releases/latest/download/natnet_zenoh-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+```
+
+Linux (arm64):
+
+```sh
+curl -fsSL https://github.com/AndrejOrsula/natnet_zenoh/releases/latest/download/natnet_zenoh-aarch64-unknown-linux-gnu.tar.gz | tar -xz
+```
+
+macOS (Apple silicon):
+
+```sh
+curl -fsSL https://github.com/AndrejOrsula/natnet_zenoh/releases/latest/download/natnet_zenoh-aarch64-apple-darwin.tar.gz | tar -xz
+```
+
+macOS (Intel):
+
+```sh
+curl -fsSL https://github.com/AndrejOrsula/natnet_zenoh/releases/latest/download/natnet_zenoh-x86_64-apple-darwin.tar.gz | tar -xz
+```
+
+Windows:
+
+```powershell
+curl.exe -fsSLO https://github.com/AndrejOrsula/natnet_zenoh/releases/latest/download/natnet_zenoh-x86_64-pc-windows-msvc.zip
+tar.exe -xf natnet_zenoh-x86_64-pc-windows-msvc.zip
+```
+
 ### Cargo
 
 ```sh
