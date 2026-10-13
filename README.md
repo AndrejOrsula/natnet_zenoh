@@ -52,7 +52,7 @@ natnet_zenoh run -c nz.toml
 ```
 
 ```sh
-exportRMW_IMPLEMENTATION=rmw_zenoh_cpp
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 ros2 topic echo --no-daemon /tf
 ```
 
