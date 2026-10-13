@@ -1,6 +1,6 @@
 # natnet_zenoh
 
-[![CI](https://github.com/AndrejOrsula/natnet_zenoh/actions/workflows/rust.yml/badge.svg)](https://github.com/AndrejOrsula/natnet_zenoh/actions/workflows/rust.yml)
+[![CI](https://github.com/AndrejOrsula/natnet_zenoh/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrejOrsula/natnet_zenoh/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/AndrejOrsula/natnet_zenoh/branch/main/graph/badge.svg)](https://codecov.io/gh/AndrejOrsula/natnet_zenoh/tree/main)
 
 > Rust bridge from the OptiTrack **NatNet** protocol used by Motive to Zenoh
