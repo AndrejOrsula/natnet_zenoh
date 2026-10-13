@@ -1,1 +1,3 @@
-/target
+*.aucap
+*.natnet
+target
