@@ -1,0 +1,242 @@
+# Active values are defaults; edit what you need. Optional examples are
+# commented out. source.kind selects "live", "replay", or "synthetic".
+# Live mode discovers Motive by multicast; 0.0.0.0 joins eligible interfaces.
+# From the repository root, validate and run:
+#   cargo run -- check natnet_zenoh.toml
+#   cargo run -- run --config natnet_zenoh.toml
+# After installation, use `natnet_zenoh` instead of `cargo run --`.
+# Relative paths use the process working directory. `-c/--config` selects a
+# file; otherwise `NATNET_ZENOH_CONFIG`, then defaults. CLI options override
+# file values; omit one-way switches to use file values. Environment variables
+# apply where noted. Run duration, record output, and serve mode are CLI options.
+
+[source]
+# "live", "replay", or "synthetic".
+kind = "live"
+# Queue capacity, 1..=65536 events. Full queues drop frames; unpaced replay
+# (rate = 0) waits for room.
+queue = 64
+# Stop the bridge when replay reaches the end.
+exit_on_end = true
+
+[source.live]
+# Optional Motive IPv4 address; unset discovers the sender by multicast.
+# server = "192.0.2.10"
+# Local multicast IPv4 address. 0.0.0.0 joins eligible active interfaces,
+# including loopback; set an address to restrict.
+interface = "0.0.0.0"
+# Command port, 1..=65535.
+command_port = 1510
+# Data port, 1..=65535; SERVERINFO can override it.
+data_port = 1511
+# IPv4 multicast group; SERVERINFO can override it.
+multicast_group = "239.255.42.99"
+# "auto" follows SERVERINFO; "multicast" joins the group; "unicast" receives
+# on the command socket. Unicast requires server; passive mode requires
+# multicast. Without server, the first multicast sender is the command peer.
+# With server, other senders' multicast is accepted unless filter_source=true.
+transport = "auto"
+# Never send commands; requires multicast. Decoding uses protocol_version
+# (default 4.1) and clock_frequency.
+passive = false
+# Forced decoder version: major.minor[.build[.revision]], 2–4 numeric byte values
+# (0..=255). Supported layouts: "3.0", "3.1", "4.0", "4.1"; omitted parts
+# are zero. Incompatible with request_bitstream.
+# protocol_version = "4.1"
+# Request a bitstream in NAT_CONNECT. Requires unicast, known server, and an
+# active handshake; incompatible with protocol_version. Simulated server
+# supports it; live Motive support is unverified.
+# request_bitstream = "4.1"
+# Camera clock frequency in Hz (passive mode).
+clock_frequency = 10000000
+# "strict" or "compatible". Both preserve opaque extensions; strict also
+# rejects negative counts, nonzero frame terminators, and unexplained trailing
+# bytes.
+parse_policy = "compatible"
+# Optional raw MODELDEF datagram file; used without a server model.
+# model_file = "modeldef.bin"
+# Initial handshake retry interval in ms; positive.
+connect_interval_ms = 1000
+# Unicast keepalive interval in ms; positive.
+keepalive_interval_ms = 250
+# Stream timeout in ms; positive.
+data_timeout_ms = 1000
+# Restrict multicast frames to the command peer.
+filter_source = false
+# Receive buffer in bytes; 0 uses the system default.
+receive_buffer = 4194304
+# Model polling interval in seconds; 0 disables polling.
+model_poll_secs = 30
+
+# Replay settings; set path when kind = "replay". Supports .natnet and .aucap,
+# detected by contents. This subsection may stay configured for other sources.
+[source.replay]
+path = ""
+# Playback multiplier: 0 is unpaced; otherwise 0.001..=1000000.
+rate = 1.0
+looping = false
+# Start offset in seconds; finite and non-negative.
+start_offset_secs = 0.0
+# Optional forced decoder version (format and layouts above); else capture
+# SERVERINFO, falling back to 4.1.
+# protocol_version = "4.1"
+# Camera clock frequency in Hz if capture lacks SERVERINFO.
+clock_frequency = 10000000
+# Optional raw MODELDEF file if capture lacks a model.
+# model_file = "modeldef.bin"
+parse_policy = "compatible"
+
+# Deterministic bodies, markers, skeletons, force plates, and device.
+[source.synthetic]
+rate_hz = 120.0 # (0, 10000] Hz
+rigid_bodies = 3 # 0..=1000
+markers_per_body = 4 # 0..=1000 per body
+skeleton = true
+force_plate = true
+device = true
+# Mark every Nth frame's bodies untracked; 0 disables.
+dropout_period = 0
+# NatNet version string using the format/layouts above, e.g. "4.1".
+protocol_version = "4.1"
+clock_frequency = 10000000 # Hz
+radius = 1.0 # metres; finite
+period_secs = 10.0 # seconds per revolution; finite and positive
+
+[zenoh]
+# Optional Zenoh JSON5 file.
+# config_file = "zenoh.json5"
+# Inline Zenoh JSON5, used only if config_file is unset. Keep timestamping on
+# for transient-local ROS topics. Uncomment delimiters and remove leading #:
+# config_json5 = '''
+# {
+#   mode: "peer",
+#   timestamping: { enabled: true },
+#   listen: { endpoints: ["tcp/0.0.0.0:0"] },
+# }
+# '''
+# Zenoh `key=value` entries. Replace overrides = [] with this example:
+# overrides = ["connect/endpoints=[\"tcp/192.0.2.1:7447\"]"]
+# Overrides, last wins: ZENOH_CONFIG_OVERRIDE, zenoh.overrides, --connect.
+# Base config, first set wins: --zenoh-config, config_file, config_json5,
+# ZENOH_SESSION_CONFIG_URI, then rmw_zenoh defaults.
+# Use JSON5 or overrides for other Zenoh settings. Transport and authentication
+# options need their Cargo feature; defaults include TCP and Unix sockets.
+overrides = []
+# `check` validates TOML only, not Zenoh JSON5 or router connectivity.
+# Router attempts before continuing without a router: 0 waits forever; unset
+# uses ZENOH_ROUTER_CHECK_ATTEMPTS, else 1. A negative env value skips checking.
+# router_check_attempts = 1
+
+[ros]
+enabled = true
+# Optional ROS domain; unset inherits ROS_DOMAIN_ID, then defaults to 0.
+# domain_id = 42
+node_name = "natnet"
+namespace = "/"
+# Enclave name in liveliness tokens; does not configure SROS2 or Zenoh access.
+enclave = "/"
+# rmw_zenoh_cpp protocol: "current", "humble", "jazzy-0.2.3",
+# "jazzy-0.2.2", or "jazzy-0.2.0".
+rmw_zenoh = "current"
+world_frame = "mocap"
+frame_prefix = ""
+rosout = true
+parameters = true
+# `~/get_type_description`; unavailable with rmw_zenoh = "humble".
+type_description_service = true
+# Optional transforms: parent/child frames, translation [x,y,z] in metres,
+# and rpy [roll,pitch,yaw] in radians. Delete the static_transforms = [] line,
+# then uncomment the table to publish on /tf_static.
+static_transforms = []
+# [[ros.static_transforms]]
+# parent = "mocap"
+# child = "sensor_frame"
+# translation = [0.0, 0.0, 0.0]
+# rpy = [0.0, 0.0, 0.0]
+
+[ros.stream_qos]
+# "system_default", "reliable", or "best_effort".
+reliability = "reliable"
+# "system_default", "transient_local", or "volatile".
+durability = "volatile"
+# History depth, 1..=10000; also bounds transient-local history.
+depth = 10
+
+[native]
+# Publish native Zenoh keys independently of ROS; CLI --native enables this.
+enabled = false
+# Prefix must be a valid Zenoh key expression without wildcards or empty chunks.
+prefix = "natnet"
+frame_json = true
+rigid_body_json = true
+raw = false # Re-encode each frame as a NatNet datagram.
+
+[transform]
+# Motive up axis: "y" converts to ROS Z-up; "z" passes through. CLI overrides.
+up_axis = "y"
+scale = 1.0 # Motive metres multiplied by this positive finite factor.
+offset_translation = [0.0, 0.0, 0.0] # metres, after axis conversion
+offset_rpy = [0.0, 0.0, 0.0] # roll, pitch, yaw in radians
+
+[timing]
+# "clock_sync" estimates server/host offset; "latency_compensated" subtracts
+# server latency from receive time; "receive" uses datagram arrival time.
+policy = "clock_sync"
+window_secs = 10.0 # finite, positive, at most 1000000
+# 0 publishes every frame; otherwise cap at 0.001..=100000 Hz. All frames
+# still feed velocity estimates.
+max_rate_hz = 0.0
+
+[rigid_bodies]
+tf = true
+pose = true
+odometry = true
+twist = false
+path = false
+# Path history, 1..=100000 poses when enabled; sampled at 10 Hz.
+path_length = 500
+pose_array = true
+# Publish on `rigid_bodies`; subscribers need the mocap4r2_msgs ROS package.
+mocap4r2 = false
+# Include Motive's last pose for untracked bodies/bones; no velocity estimate.
+publish_untracked = false
+# Empty include means all. Include/exclude accept names and `*`; exclude wins.
+include = []
+exclude = []
+# Velocity smoothing in (0, 1]; 1 disables it.
+velocity_alpha = 0.5
+# Maximum velocity-estimation gap in seconds; finite, (0, 1000000].
+velocity_max_gap = 0.1
+
+# Rename Motive names; quote keys with spaces or punctuation. ROS sanitizes
+# output names. Uncomment the example mapping to rename a body to "tool".
+[rigid_bodies.rename]
+# "Rigid Body 1" = "tool"
+
+[markers]
+point_cloud = true
+include_unlabeled = true
+# Publish on `markers`; subscribers need the mocap4r2_msgs ROS package.
+mocap4r2 = false
+visualization = true
+# Visualization rate in Hz; 0 means every frame, otherwise 0.001..=100000.
+visualization_rate_hz = 30.0
+axis_length = 0.1 # metres, (0, 1000]
+
+[skeletons]
+tf = true
+pose_array = true
+# "global" or "local" (relative to parent bone).
+coordinates = "global"
+
+[analog]
+force_plate_wrench = true
+force_plate_channels = true
+device_channels = true
+
+[diagnostics]
+enabled = true
+period_secs = 1.0 # seconds, 0.001..=1000000
+# Warn above this dropped-frame fraction per period; finite and non-negative.
+drop_warn_ratio = 0.05
+latency_warn_secs = 0.05 # seconds, finite and non-negative
